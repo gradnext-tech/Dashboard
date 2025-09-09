@@ -1,0 +1,187 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { googleSheetsService } from '@/lib/google-sheets'
+
+export async function GET(request: NextRequest) {
+  try {
+    // Get query parameter to determine if we want all payments or just due payments
+    const { searchParams } = new URL(request.url)
+    const type = searchParams.get('type')
+
+    let payments
+    if (type === 'due') {
+      payments = await googleSheetsService.getDuePayments()
+    } else {
+      payments = await googleSheetsService.getPaymentData()
+    }
+
+    return NextResponse.json({ payments })
+  } catch (error) {
+    console.error('Error fetching payments:', error)
+    return NextResponse.json(
+      { error: 'Failed to fetch payments' },
+      { status: 500 }
+    )
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const { action, paymentIds } = body
+
+    if (action === 'markPaid') {
+      if (!paymentIds || !Array.isArray(paymentIds)) {
+        return NextResponse.json(
+          { error: 'Invalid payment IDs' },
+          { status: 400 }
+        )
+      }
+
+      if (paymentIds.length === 1) {
+        await googleSheetsService.markAsPaid(paymentIds[0])
+      } else {
+        await googleSheetsService.markMultipleAsPaid(paymentIds)
+      }
+
+      return NextResponse.json({ success: true })
+    }
+
+    if (action === 'exportToMentorCommission') {
+      // Get all due payments
+      const duePayments = await googleSheetsService.getDuePayments()
+      
+      if (duePayments.length === 0) {
+        return NextResponse.json(
+          { error: 'No due payments to export' },
+          { status: 400 }
+        )
+      }
+
+      // Export to Mentor Commission sheet
+      await googleSheetsService.exportToMentorCommission(duePayments)
+
+      return NextResponse.json({ 
+        success: true, 
+        message: `Successfully exported ${duePayments.length} payments to Mentor Commission sheet` 
+      })
+    }
+
+    if (action === 'addManualEntry') {
+      const { entry } = body
+
+      if (!entry) {
+        return NextResponse.json(
+          { error: 'Entry data is required' },
+          { status: 400 }
+        )
+      }
+
+      // Validate required fields
+      const requiredFields = ['mentorName', 'menteeName', 'sessionDate', 'sessionStatus', 'rate', 'paymentStatus', 'noOfSessions', 'totalPayout']
+      const missingFields = requiredFields.filter(field => !entry[field] && entry[field] !== 0)
+      
+      if (missingFields.length > 0) {
+        return NextResponse.json(
+          { error: `Missing required fields: ${missingFields.join(', ')}` },
+          { status: 400 }
+        )
+      }
+
+      // Add manual entry to Mentor Commission sheet
+      await googleSheetsService.addManualEntryToMentorCommission(entry)
+
+      return NextResponse.json({ 
+        success: true, 
+        message: 'Successfully added manual entry to Mentor Commission sheet' 
+      })
+    }
+
+    if (action === 'emailMentorPayouts') {
+      // Aggregate due payouts per mentor
+      const duePayouts = await googleSheetsService.getDuePayoutsByMentor()
+
+      if (!duePayouts || duePayouts.length === 0) {
+        return NextResponse.json({ success: true, message: 'No due payouts to email' })
+      }
+
+      // Setup transporter
+      const host = process.env.SMTP_HOST
+      const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 587
+      const user = process.env.SMTP_USER
+      const pass = process.env.SMTP_PASS
+      const from = process.env.FROM_EMAIL || 'no-reply@gradnext.com'
+
+      if (!host || !user || !pass) {
+        return NextResponse.json({ success: false, error: 'SMTP is not configured' }, { status: 500 })
+      }
+
+      const nodemailer = await import('nodemailer')
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+      })
+
+      // Send emails (skip entries without an email)
+      const results: Array<{ mentorName: string; mentorEmail: string; status: string }> = []
+      for (const entry of duePayouts) {
+        const mentorEmail = (entry.mentorEmail || '').trim()
+        if (!mentorEmail) {
+          results.push({ mentorName: entry.mentorName, mentorEmail: '', status: 'skipped:no-email' })
+          continue
+        }
+
+        const amountInr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(entry.totalPayout)
+        const subject = `Your pending payout summary`
+        
+        // Create monthly breakdown text
+        const monthlyBreakdownText = entry.monthlyBreakdown.map(month => 
+          `  ${month.month}: ${month.sessions} sessions - ${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(month.payout)}`
+        ).join('\n')
+        
+        const text = `Hi ${entry.mentorName},\n\n` +
+          `This is a summary of your pending payout with GradNext.\n\n` +
+          `Monthly Breakdown:\n${monthlyBreakdownText}\n\n` +
+          `Total Sessions: ${entry.sessions}\n` +
+          `Total Payout: ${amountInr}\n\n` +
+          `We will process the payout after confirmation.\n\n` +
+          `Best,\nGradNext`
+        
+        // Create monthly breakdown HTML
+        const monthlyBreakdownHtml = entry.monthlyBreakdown.map(month => 
+          `<tr><td>${month.month}</td><td>${month.sessions}</td><td>${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(month.payout)}</td></tr>`
+        ).join('')
+        
+        const html = `<p>Hi ${entry.mentorName},</p>` +
+          `<p>This is a summary of your pending payout with GradNext.</p>` +
+          `<h3>Monthly Breakdown:</h3>` +
+          `<table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; margin: 10px 0;">` +
+          `<thead><tr style="background-color: #f5f5f5;"><th>Month</th><th>Sessions</th><th>Payout</th></tr></thead>` +
+          `<tbody>${monthlyBreakdownHtml}</tbody>` +
+          `</table>` +
+          `<p><strong>Total Sessions:</strong> ${entry.sessions}</p>` +
+          `<p><strong>Total Payout:</strong> ${amountInr}</p>` +
+          `<p>We will process the payout after confirmation.</p>` +
+          `<p>Best,<br/>GradNext</p>`
+
+        try {
+          await transporter.sendMail({ from, to: mentorEmail, subject, text, html })
+          results.push({ mentorName: entry.mentorName, mentorEmail, status: 'sent' })
+        } catch (e) {
+          results.push({ mentorName: entry.mentorName, mentorEmail, status: 'failed' })
+        }
+      }
+
+      return NextResponse.json({ success: true, results })
+    }
+
+    return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
+  } catch (error) {
+    console.error('Error processing payment action:', error)
+    return NextResponse.json(
+      { error: 'Failed to process payment action' },
+      { status: 500 }
+    )
+  }
+}
