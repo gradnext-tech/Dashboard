@@ -7,6 +7,21 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const type = searchParams.get('type')
 
+    if (type === 'mentor-commissions') {
+      const mentorCommissions = await googleSheetsService.getDuePayoutsByMentorIncludingCorporate()
+      return NextResponse.json({ mentorCommissions })
+    }
+
+    if (type === 'corporate-sessions') {
+      const corporateSessions = await googleSheetsService.getCorporateSessionsData()
+      return NextResponse.json({ corporateSessions })
+    }
+
+    if (type === 'all-payments') {
+      const allPayments = await googleSheetsService.getAllDuePaymentsIncludingCorporate()
+      return NextResponse.json({ payments: allPayments })
+    }
+
     let payments
     if (type === 'due') {
       payments = await googleSheetsService.getDuePayments()

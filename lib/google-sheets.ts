@@ -20,6 +20,28 @@ export interface MentorRate {
   rate: number
 }
 
+export interface CorporateSessionRecord {
+  id: string
+  sNo: string
+  mentorName: string
+  mentorEmail: string
+  menteeName: string // This will be the sheet name
+  menteeEmail: string
+  menteePhone: string
+  date: string
+  time: string
+  inviteTitle: string
+  invitationStatus: string
+  mentorConfirmationStatus: string
+  menteeConfirmationStatus: string
+  sessionStatus: string
+  mentorFeedback: string
+  menteeFeedback: string
+  paymentStatus: string
+  rowIndex: number
+  sheetName: string
+}
+
 
 class GoogleSheetsService {
   private sheets: any
@@ -499,6 +521,229 @@ class GoogleSheetsService {
     }>()
 
     for (const p of duePayments) {
+      const key = (p.mentorEmail && p.mentorEmail.trim().toLowerCase()) || p.mentorName.toLowerCase().trim()
+      let existing = aggregation.get(key)
+      
+      if (!existing) {
+        existing = {
+          mentorName: p.mentorName,
+          mentorEmail: p.mentorEmail || '',
+          totalPayout: 0,
+          sessions: 0,
+          monthlyBreakdown: new Map()
+        }
+        aggregation.set(key, existing)
+      }
+
+      existing.totalPayout += p.totalPayout
+      existing.sessions += p.noOfSessions
+
+      // Extract month from session date
+      let monthKey = 'Unknown Month'
+      try {
+        const date = new Date(p.sessionDate)
+        if (!isNaN(date.getTime())) {
+          monthKey = date.toLocaleDateString('en-IN', { year: 'numeric', month: 'long' })
+        }
+      } catch (e) {
+        console.warn(`Could not parse date: ${p.sessionDate}`)
+      }
+
+      const monthData = existing.monthlyBreakdown.get(monthKey) || { payout: 0, sessions: 0 }
+      monthData.payout += p.totalPayout
+      monthData.sessions += p.noOfSessions
+      existing.monthlyBreakdown.set(monthKey, monthData)
+    }
+
+    return Array.from(aggregation.values()).map(entry => ({
+      mentorName: entry.mentorName,
+      mentorEmail: entry.mentorEmail,
+      totalPayout: entry.totalPayout,
+      sessions: entry.sessions,
+      monthlyBreakdown: Array.from(entry.monthlyBreakdown.entries())
+        .map(([month, data]) => ({ month, payout: data.payout, sessions: data.sessions }))
+        .sort((a, b) => a.month.localeCompare(b.month))
+    }))
+  }
+
+  async getCorporateSessionsData(): Promise<CorporateSessionRecord[]> {
+    try {
+      const corporateSpreadsheetId = process.env.CORPORATE_SHEET_ID
+      
+      if (!corporateSpreadsheetId) {
+        throw new Error('CORPORATE_SHEET_ID is not configured')
+      }
+
+      // Get all sheets in the corporate spreadsheet
+      const spreadsheet = await this.sheets.spreadsheets.get({
+        spreadsheetId: corporateSpreadsheetId,
+      })
+
+      const sheets = spreadsheet.data.sheets || []
+      console.log('Corporate sheets found:', sheets.map((s: any) => s.properties?.title))
+
+      const allCorporateSessions: CorporateSessionRecord[] = []
+      let globalSNo = 1
+
+      // Process each sheet (excluding any system sheets)
+      for (const sheet of sheets) {
+        const sheetTitle = sheet.properties?.title
+        if (!sheetTitle || sheetTitle.toLowerCase().includes('summary') || sheetTitle.toLowerCase().includes('template')) {
+          continue
+        }
+
+        console.log(`Processing corporate sheet: ${sheetTitle}`)
+
+        try {
+          // Get data from this sheet
+          const response = await this.sheets.spreadsheets.values.get({
+            spreadsheetId: corporateSpreadsheetId,
+            range: `${sheetTitle}!A:P`, // Columns A to P for all the required fields
+          })
+
+          const rows = response.data.values || []
+          
+          if (rows.length <= 1) {
+            console.log(`No data found in sheet: ${sheetTitle}`)
+            continue
+          }
+
+          console.log(`Found ${rows.length} rows in sheet: ${sheetTitle}`)
+
+          // Process data rows (skip header)
+          for (let i = 1; i < rows.length; i++) {
+            const row = rows[i]
+            if (row.length === 0) continue
+
+            // Map the columns based on the expected structure
+            const corporateSession: CorporateSessionRecord = {
+              id: `corporate_${sheetTitle}_${i}`,
+              sNo: globalSNo.toString(),
+              mentorName: row[1] || '', // Column B
+              mentorEmail: row[2] || '', // Column C
+              menteeName: sheetTitle, // Sheet name as mentee name
+              menteeEmail: row[3] || '', // Column D
+              menteePhone: row[4] || '', // Column E
+              date: row[5] || '', // Column F
+              time: row[6] || '', // Column G
+              inviteTitle: row[7] || '', // Column H
+              invitationStatus: row[8] || '', // Column I
+              mentorConfirmationStatus: row[9] || '', // Column J
+              menteeConfirmationStatus: row[10] || '', // Column K
+              sessionStatus: row[11] || '', // Column L
+              mentorFeedback: row[12] || '', // Column M
+              menteeFeedback: row[13] || '', // Column N
+              paymentStatus: row[15] || '', // Column P (corrected from O to P)
+              rowIndex: i + 1,
+              sheetName: sheetTitle
+            }
+
+            allCorporateSessions.push(corporateSession)
+            globalSNo++
+          }
+        } catch (sheetError) {
+          console.error(`Error processing sheet ${sheetTitle}:`, sheetError)
+          // Continue with other sheets even if one fails
+        }
+      }
+
+      console.log(`Total corporate sessions found: ${allCorporateSessions.length}`)
+      return allCorporateSessions
+    } catch (error) {
+      console.error('Error fetching corporate sessions data:', error)
+      throw error
+    }
+  }
+
+  async getCorporateDuePayments(): Promise<CorporateSessionRecord[]> {
+    const allSessions = await this.getCorporateSessionsData()
+    
+    // Filter sessions where Payment Status equals "Due"
+    const dueSessions = allSessions.filter(session => 
+      session.paymentStatus.toLowerCase().trim() === 'due'
+    )
+    
+    // Update S No to be sequential for filtered results
+    return dueSessions.map((session, index) => ({
+      ...session,
+      sNo: (index + 1).toString()
+    }))
+  }
+
+  async getAllPaymentsIncludingCorporate(): Promise<PaymentRecord[]> {
+    try {
+      // Get regular payments
+      const regularPayments = await this.getPaymentData()
+      
+      // Get corporate sessions
+      const corporateSessions = await this.getCorporateSessionsData()
+      
+      // Convert corporate sessions to PaymentRecord format
+      const corporatePayments: PaymentRecord[] = corporateSessions.map(session => ({
+        id: session.id,
+        sNo: session.sNo,
+        mentorName: session.mentorName,
+        menteeName: session.menteeName, // This is the sheet name
+        sessionDate: session.date,
+        sessionStatus: session.sessionStatus,
+        rate: 0, // We'll need to get this from mentor rates
+        paymentStatus: session.paymentStatus,
+        noOfSessions: 1, // Each corporate session is typically 1 session
+        totalPayout: 0, // We'll calculate this based on mentor rates
+        rowIndex: session.rowIndex,
+        mentorEmail: session.mentorEmail
+      }))
+
+      // Get mentor rates for calculation
+      const mentorRates = await this.getMentorRates()
+      
+      // Calculate rates and payouts for corporate sessions
+      corporatePayments.forEach(payment => {
+        const mentorRate = this.getMentorRate(mentorRates, payment.mentorName)
+        payment.rate = mentorRate
+        payment.totalPayout = mentorRate * payment.noOfSessions
+      })
+
+      // Combine regular and corporate payments
+      return [...regularPayments, ...corporatePayments]
+    } catch (error) {
+      console.error('Error fetching all payments including corporate:', error)
+      throw error
+    }
+  }
+
+  async getAllDuePaymentsIncludingCorporate(): Promise<PaymentRecord[]> {
+    const allPayments = await this.getAllPaymentsIncludingCorporate()
+    
+    // Filter payments where Payment Status equals "Due"
+    const duePayments = allPayments.filter(payment => 
+      payment.paymentStatus.toLowerCase().trim() === 'due'
+    )
+    
+    // Update S No to be sequential for filtered results
+    return duePayments.map((payment, index) => ({
+      ...payment,
+      sNo: (index + 1).toString()
+    }))
+  }
+
+  async getDuePayoutsByMentorIncludingCorporate(): Promise<Array<{ 
+    mentorName: string; 
+    mentorEmail: string; 
+    totalPayout: number; 
+    sessions: number;
+    monthlyBreakdown: Array<{ month: string; payout: number; sessions: number }>
+  }>> {
+    const allPayments = await this.getAllDuePaymentsIncludingCorporate()
+    const aggregation = new Map<string, { 
+      mentorName: string; 
+      mentorEmail: string; 
+      totalPayout: number; 
+      sessions: number;
+      monthlyBreakdown: Map<string, { payout: number; sessions: number }>
+    }>()
+
+    for (const p of allPayments) {
       const key = (p.mentorEmail && p.mentorEmail.trim().toLowerCase()) || p.mentorName.toLowerCase().trim()
       let existing = aggregation.get(key)
       

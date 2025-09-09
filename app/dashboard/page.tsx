@@ -6,19 +6,30 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { PaymentTable } from '@/components/payment-table'
+import { MentorCommissionTable } from '@/components/mentor-commission-table'
+import { CorporateSessionsTable } from '@/components/corporate-sessions-table'
 import { AddManualEntryForm } from '@/components/add-manual-entry-form'
-import { PaymentRecord } from '@/lib/google-sheets'
-import { RefreshCw, LogOut, DollarSign, Clock, CheckCircle, Download, Plus } from 'lucide-react'
+import { PaymentRecord, CorporateSessionRecord } from '@/lib/google-sheets'
+import { RefreshCw, LogOut, DollarSign, Clock, CheckCircle, Download, Plus, Users, BarChart3, Building2 } from 'lucide-react'
 
 export default function Dashboard() {
   const { isAuthenticated, logout, loading: authLoading } = useAuth()
   const router = useRouter()
   const [payments, setPayments] = useState<PaymentRecord[]>([])
+  const [mentorCommissions, setMentorCommissions] = useState<Array<{
+    mentorName: string
+    mentorEmail: string
+    totalPayout: number
+    sessions: number
+    monthlyBreakdown: Array<{ month: string; payout: number; sessions: number }>
+  }>>([])
+  const [corporateSessions, setCorporateSessions] = useState<CorporateSessionRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [showAddForm, setShowAddForm] = useState(false)
   const [addingEntry, setAddingEntry] = useState(false)
+  const [activeTab, setActiveTab] = useState<'payments' | 'commissions' | 'corporate'>('payments')
 
   useEffect(() => {
     if (authLoading) return
@@ -29,6 +40,8 @@ export default function Dashboard() {
     }
 
     fetchPayments()
+    fetchMentorCommissions()
+    fetchCorporateSessions()
   }, [isAuthenticated, authLoading, router])
 
   const fetchPayments = async (showDueOnly = true) => {
@@ -50,6 +63,36 @@ export default function Dashboard() {
     }
   }
 
+  const fetchMentorCommissions = async () => {
+    try {
+      const response = await fetch('/api/payments?type=mentor-commissions')
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch mentor commissions')
+      }
+      
+      const data = await response.json()
+      setMentorCommissions(data.mentorCommissions || [])
+    } catch (error) {
+      console.error('Error fetching mentor commissions:', error)
+    }
+  }
+
+  const fetchCorporateSessions = async () => {
+    try {
+      const response = await fetch('/api/payments?type=corporate-sessions')
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch corporate sessions')
+      }
+      
+      const data = await response.json()
+      setCorporateSessions(data.corporateSessions || [])
+    } catch (error) {
+      console.error('Error fetching corporate sessions:', error)
+    }
+  }
+
   const handleMarkAsPaid = async (paymentIds: string[]) => {
     try {
       const response = await fetch('/api/payments', {
@@ -67,8 +110,10 @@ export default function Dashboard() {
         throw new Error('Failed to mark payments as paid')
       }
 
-      // Refresh the payments list
+      // Refresh the payments list, mentor commissions, and corporate sessions
       await fetchPayments()
+      await fetchMentorCommissions()
+      await fetchCorporateSessions()
     } catch (error) {
       console.error('Error marking payments as paid:', error)
     }
@@ -220,104 +265,225 @@ export default function Dashboard() {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Due</CardTitle>
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(totalDue)}</div>
-              <p className="text-xs text-muted-foreground">
-                {duePayments.length} pending payments
-              </p>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Pending</CardTitle>
-              <Clock className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{duePayments.length}</div>
-              <p className="text-xs text-muted-foreground">
-                Payments awaiting processing
-              </p>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Completed</CardTitle>
-              <CheckCircle className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{paidPayments}</div>
-              <p className="text-xs text-muted-foreground">
-                Out of {totalPayments} total
-              </p>
-            </CardContent>
-          </Card>
-
+        {/* Tab Navigation */}
+        <div className="mb-8">
+          <div className="border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('payments')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'payments'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                <div className="flex items-center">
+                  <DollarSign className="w-4 h-4 mr-2" />
+                  Due Payments
+                </div>
+              </button>
+              <button
+                onClick={() => setActiveTab('commissions')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'commissions'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                <div className="flex items-center">
+                  <BarChart3 className="w-4 h-4 mr-2" />
+                  Mentor Commissions
+                </div>
+              </button>
+              <button
+                onClick={() => setActiveTab('corporate')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'corporate'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                <div className="flex items-center">
+                  <Building2 className="w-4 h-4 mr-2" />
+                  Corporate Sessions
+                </div>
+              </button>
+            </nav>
+          </div>
         </div>
 
-        {/* Payments Table */}
-        <Card>
-          <CardHeader>
-            <div className="flex justify-between items-center">
-              <div>
-                <CardTitle>Due Payments</CardTitle>
-                <CardDescription>
-                  Payments that need to be processed
-                </CardDescription>
-              </div>
-              <div className="flex space-x-2">
+        {/* Tab Content */}
+        {activeTab === 'payments' && (
+          <>
+            {/* Stats Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Total Due</CardTitle>
+                  <DollarSign className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{formatCurrency(totalDue)}</div>
+                  <p className="text-xs text-muted-foreground">
+                    {duePayments.length} pending payments
+                  </p>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Pending</CardTitle>
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{duePayments.length}</div>
+                  <p className="text-xs text-muted-foreground">
+                    Payments awaiting processing
+                  </p>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Completed</CardTitle>
+                  <CheckCircle className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{paidPayments}</div>
+                  <p className="text-xs text-muted-foreground">
+                    Out of {totalPayments} total
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Payments Table */}
+            <Card>
+              <CardHeader>
+                <div className="flex justify-between items-center">
+                  <div>
+                    <CardTitle>Due Payments</CardTitle>
+                    <CardDescription>
+                      Payments that need to be processed
+                    </CardDescription>
+                  </div>
+                  <div className="flex space-x-2">
+                    <Button
+                      onClick={() => setShowAddForm(true)}
+                      variant="outline"
+                      className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add Manual Entry
+                    </Button>
+                    <Button
+                      onClick={handleEmailMentorPayouts}
+                      disabled={emailing}
+                      variant="outline"
+                      className="bg-purple-600 hover:bg-purple-700 text-white border-purple-600"
+                    >
+                      {emailing ? 'Sending Emails...' : 'Email Mentor Payouts'}
+                    </Button>
+                    <Button
+                      onClick={handleExportToMentorCommission}
+                      disabled={exporting || duePayments.length === 0}
+                      variant="outline"
+                      className="bg-green-600 hover:bg-green-700 text-white border-green-600"
+                    >
+                      <Download className={`w-4 h-4 mr-2 ${exporting ? 'animate-spin' : ''}`} />
+                      {exporting ? 'Exporting...' : 'Export to Mentor Commission'}
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        fetchPayments()
+                        fetchMentorCommissions()
+                        fetchCorporateSessions()
+                      }}
+                      disabled={refreshing}
+                      variant="outline"
+                    >
+                      <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+                      Import Data
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <PaymentTable
+                  payments={duePayments}
+                  onMarkAsPaid={handleMarkAsPaid}
+                  loading={refreshing}
+                />
+              </CardContent>
+            </Card>
+          </>
+        )}
+
+        {activeTab === 'commissions' && (
+          <Card>
+            <CardHeader>
+              <div className="flex justify-between items-center">
+                <div>
+                  <CardTitle>Mentor Commission Summary</CardTitle>
+                  <CardDescription>
+                    Total commission breakdown by mentor (including corporate sessions)
+                  </CardDescription>
+                </div>
                 <Button
-                  onClick={() => setShowAddForm(true)}
-                  variant="outline"
-                  className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Manual Entry
-                </Button>
-                <Button
-                  onClick={handleEmailMentorPayouts}
-                  disabled={emailing}
-                  variant="outline"
-                  className="bg-purple-600 hover:bg-purple-700 text-white border-purple-600"
-                >
-                  {emailing ? 'Sending Emails...' : 'Email Mentor Payouts'}
-                </Button>
-                <Button
-                  onClick={handleExportToMentorCommission}
-                  disabled={exporting || duePayments.length === 0}
-                  variant="outline"
-                  className="bg-green-600 hover:bg-green-700 text-white border-green-600"
-                >
-                  <Download className={`w-4 h-4 mr-2 ${exporting ? 'animate-spin' : ''}`} />
-                  {exporting ? 'Exporting...' : 'Export to Mentor Commission'}
-                </Button>
-                <Button
-                  onClick={() => fetchPayments()}
+                  onClick={() => {
+                    fetchMentorCommissions()
+                    fetchPayments()
+                    fetchCorporateSessions()
+                  }}
                   disabled={refreshing}
                   variant="outline"
                 >
                   <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-                  Import Data
+                  Refresh Data
                 </Button>
               </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <PaymentTable
-              payments={duePayments}
-              onMarkAsPaid={handleMarkAsPaid}
-              loading={refreshing}
-            />
-          </CardContent>
-        </Card>
+            </CardHeader>
+            <CardContent>
+              <MentorCommissionTable
+                data={mentorCommissions}
+                loading={refreshing}
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === 'corporate' && (
+          <Card>
+            <CardHeader>
+              <div className="flex justify-between items-center">
+                <div>
+                  <CardTitle>Corporate Sessions</CardTitle>
+                  <CardDescription>
+                    Corporate session data from multiple company sheets
+                  </CardDescription>
+                </div>
+                <Button
+                  onClick={() => {
+                    fetchCorporateSessions()
+                    fetchPayments()
+                    fetchMentorCommissions()
+                  }}
+                  disabled={refreshing}
+                  variant="outline"
+                >
+                  <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+                  Refresh Data
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <CorporateSessionsTable
+                data={corporateSessions}
+                loading={refreshing}
+              />
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Add Manual Entry Form Modal */}
