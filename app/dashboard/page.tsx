@@ -47,7 +47,8 @@ export default function Dashboard() {
   const fetchPayments = async (showDueOnly = true) => {
     try {
       setRefreshing(true)
-      const response = await fetch(`/api/payments?type=${showDueOnly ? 'due' : 'all'}`)
+      // Use all-payments to include corporate sessions
+      const response = await fetch(`/api/payments?type=${showDueOnly ? 'all-payments' : 'all'}`)
       
       if (!response.ok) {
         throw new Error('Failed to fetch payments')
@@ -227,6 +228,12 @@ export default function Dashboard() {
   const totalDue = duePayments.reduce((sum, payment) => sum + payment.totalPayout, 0)
   const totalPayments = payments.length
   const paidPayments = payments.filter(p => p.paymentStatus.toLowerCase() === 'paid').length
+  
+  // Separate regular and corporate payments for display
+  const regularPayments = payments.filter(p => !p.id.startsWith('corporate_'))
+  const corporatePayments = payments.filter(p => p.id.startsWith('corporate_'))
+  const regularDuePayments = regularPayments.filter(p => p.paymentStatus.toLowerCase() === 'due')
+  const corporateDuePayments = corporatePayments.filter(p => p.paymentStatus.toLowerCase() === 'due')
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
@@ -316,7 +323,7 @@ export default function Dashboard() {
         {activeTab === 'payments' && (
           <>
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Total Due</CardTitle>
@@ -326,19 +333,35 @@ export default function Dashboard() {
                   <div className="text-2xl font-bold">{formatCurrency(totalDue)}</div>
                   <p className="text-xs text-muted-foreground">
                     {duePayments.length} pending payments
+                    {corporateDuePayments.length > 0 && (
+                      <span className="text-blue-600"> ({corporateDuePayments.length} corporate)</span>
+                    )}
                   </p>
                 </CardContent>
               </Card>
               
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Pending</CardTitle>
+                  <CardTitle className="text-sm font-medium">Regular Sessions</CardTitle>
                   <Clock className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{duePayments.length}</div>
+                  <div className="text-2xl font-bold">{regularDuePayments.length}</div>
                   <p className="text-xs text-muted-foreground">
-                    Payments awaiting processing
+                    Regular payments pending
+                  </p>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Corporate Sessions</CardTitle>
+                  <Building2 className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{corporateDuePayments.length}</div>
+                  <p className="text-xs text-muted-foreground">
+                    Corporate payments pending
                   </p>
                 </CardContent>
               </Card>
@@ -361,12 +384,12 @@ export default function Dashboard() {
             <Card>
               <CardHeader>
                 <div className="flex justify-between items-center">
-                  <div>
-                    <CardTitle>Due Payments</CardTitle>
-                    <CardDescription>
-                      Payments that need to be processed
-                    </CardDescription>
-                  </div>
+                <div>
+                  <CardTitle>Due Payments</CardTitle>
+                  <CardDescription>
+                    Payments that need to be processed (including corporate sessions)
+                  </CardDescription>
+                </div>
                   <div className="flex space-x-2">
                     <Button
                       onClick={() => setShowAddForm(true)}

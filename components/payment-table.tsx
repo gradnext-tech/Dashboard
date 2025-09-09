@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { PaymentRecord } from '@/lib/google-sheets'
-import { Check, Calendar, DollarSign, User, Mail, Search, Filter } from 'lucide-react'
+import { Check, Calendar, DollarSign, User, Mail, Search, Filter, Building2 } from 'lucide-react'
 import { format } from 'date-fns'
 
 interface PaymentTableProps {
@@ -18,9 +18,12 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
   const [searchTerm, setSearchTerm] = useState('')
   const [filterMentor, setFilterMentor] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
+  const [filterType, setFilterType] = useState('')
 
   // Filter payments based on search and filter criteria
   const filteredPayments = payments.filter(payment => {
+    const isCorporate = payment.id.startsWith('corporate_')
+    
     const matchesSearch = !searchTerm || 
       payment.mentorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       payment.menteeName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -32,7 +35,11 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
     const matchesStatus = !filterStatus || 
       payment.paymentStatus.toLowerCase() === filterStatus.toLowerCase()
     
-    return matchesSearch && matchesMentor && matchesStatus
+    const matchesType = !filterType || 
+      (filterType === 'corporate' && isCorporate) ||
+      (filterType === 'regular' && !isCorporate)
+    
+    return matchesSearch && matchesMentor && matchesStatus && matchesType
   })
 
   const handleSelectAll = (checked: boolean) => {
@@ -107,7 +114,7 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
     <div className="space-y-4">
       {/* Search and Filter Bar */}
       <div className="bg-gray-50 p-4 rounded-lg">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           {/* Search Input */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
@@ -135,6 +142,20 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
             </select>
           </div>
           
+          {/* Type Filter */}
+          <div className="relative">
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">All Types</option>
+              <option value="regular">Regular Sessions</option>
+              <option value="corporate">Corporate Sessions</option>
+            </select>
+          </div>
+          
           {/* Status Filter */}
           <div className="relative">
             <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
@@ -155,6 +176,7 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
               setSearchTerm('')
               setFilterMentor('')
               setFilterStatus('')
+              setFilterType('')
             }}
             variant="outline"
             className="w-full"
@@ -234,29 +256,39 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredPayments.map((payment) => (
-                <tr key={payment.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <input
-                      type="checkbox"
-                      checked={selectedPayments.has(payment.id)}
-                      onChange={(e) => handleSelectPayment(payment.id, e.target.checked)}
-                      className="rounded border-gray-300 text-primary focus:ring-primary"
-                    />
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {payment.sNo}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">
-                      {payment.mentorName}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">
-                      {payment.menteeName}
-                    </div>
-                  </td>
+              {filteredPayments.map((payment) => {
+                const isCorporate = payment.id.startsWith('corporate_')
+                return (
+                  <tr key={payment.id} className={`hover:bg-gray-50 ${isCorporate ? 'bg-blue-50' : ''}`}>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={selectedPayments.has(payment.id)}
+                        onChange={(e) => handleSelectPayment(payment.id, e.target.checked)}
+                        className="rounded border-gray-300 text-primary focus:ring-primary"
+                      />
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {payment.sNo}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center">
+                        <div className="text-sm font-medium text-gray-900">
+                          {payment.mentorName}
+                        </div>
+                        {isCorporate && (
+                          <Building2 className="ml-2 w-4 h-4 text-blue-600" />
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">
+                        {payment.menteeName}
+                        {isCorporate && (
+                          <span className="ml-2 text-xs text-blue-600 font-normal">(Corporate)</span>
+                        )}
+                      </div>
+                    </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     {formatDate(payment.sessionDate)}
                   </td>
@@ -279,7 +311,8 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
                     </span>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -287,26 +320,42 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
 
       {/* Mobile Cards */}
       <div className="md:hidden space-y-4">
-        {filteredPayments.map((payment) => (
-          <div key={payment.id} className="bg-white rounded-lg shadow p-4 border">
-            <div className="flex items-start justify-between mb-3">
-              <div className="flex items-center space-x-3">
-                <input
-                  type="checkbox"
-                  checked={selectedPayments.has(payment.id)}
-                  onChange={(e) => handleSelectPayment(payment.id, e.target.checked)}
-                  className="rounded border-gray-300 text-primary focus:ring-primary"
-                />
-                <div className="flex-shrink-0 h-8 w-8">
-                  <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center">
-                    <User className="h-4 w-4 text-white" />
+        {filteredPayments.map((payment) => {
+          const isCorporate = payment.id.startsWith('corporate_')
+          return (
+            <div key={payment.id} className={`bg-white rounded-lg shadow p-4 border ${isCorporate ? 'border-blue-200 bg-blue-50' : ''}`}>
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center space-x-3">
+                  <input
+                    type="checkbox"
+                    checked={selectedPayments.has(payment.id)}
+                    onChange={(e) => handleSelectPayment(payment.id, e.target.checked)}
+                    className="rounded border-gray-300 text-primary focus:ring-primary"
+                  />
+                  <div className="flex-shrink-0 h-8 w-8">
+                    <div className={`h-8 w-8 rounded-full flex items-center justify-center ${isCorporate ? 'bg-blue-100' : 'bg-primary'}`}>
+                      {isCorporate ? (
+                        <Building2 className="h-4 w-4 text-blue-600" />
+                      ) : (
+                        <User className="h-4 w-4 text-white" />
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-900 flex items-center">
+                      {payment.mentorName}
+                      {isCorporate && (
+                        <Building2 className="ml-1 w-3 h-3 text-blue-600" />
+                      )}
+                    </h3>
+                    <p className="text-xs text-gray-500">
+                      Mentee: {payment.menteeName}
+                      {isCorporate && (
+                        <span className="text-blue-600"> (Corporate)</span>
+                      )}
+                    </p>
                   </div>
                 </div>
-                <div>
-                  <h3 className="text-sm font-medium text-gray-900">{payment.mentorName}</h3>
-                  <p className="text-xs text-gray-500">Mentee: {payment.menteeName}</p>
-                </div>
-              </div>
               <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-800">
                 {payment.paymentStatus || 'Pending'}
               </span>
@@ -352,7 +401,8 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
               </div>
             </div>
           </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
