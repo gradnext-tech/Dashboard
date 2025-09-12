@@ -510,6 +510,7 @@ class GoogleSheetsService {
     totalPayout: number; 
     sessions: number;
     monthlyBreakdown: Array<{ month: string; payout: number; sessions: number }>
+    sessionsBreakdown: Array<{ date: string; menteeName: string; sessions: number; payout: number }>
   }>> {
     const duePayments = await this.getDuePayments()
     const aggregation = new Map<string, { 
@@ -518,6 +519,7 @@ class GoogleSheetsService {
       totalPayout: number; 
       sessions: number;
       monthlyBreakdown: Map<string, { payout: number; sessions: number }>
+      sessionsBreakdown: Array<{ date: string; menteeName: string; sessions: number; payout: number }>
     }>()
 
     for (const p of duePayments) {
@@ -530,13 +532,22 @@ class GoogleSheetsService {
           mentorEmail: p.mentorEmail || '',
           totalPayout: 0,
           sessions: 0,
-          monthlyBreakdown: new Map()
+          monthlyBreakdown: new Map(),
+          sessionsBreakdown: []
         }
         aggregation.set(key, existing)
       }
 
       existing.totalPayout += p.totalPayout
       existing.sessions += p.noOfSessions
+
+      // Push per-session breakdown entry
+      existing.sessionsBreakdown.push({
+        date: p.sessionDate,
+        menteeName: p.menteeName,
+        sessions: p.noOfSessions,
+        payout: p.totalPayout,
+      })
 
       // Extract month from session date
       let monthKey = 'Unknown Month'
@@ -562,7 +573,15 @@ class GoogleSheetsService {
       sessions: entry.sessions,
       monthlyBreakdown: Array.from(entry.monthlyBreakdown.entries())
         .map(([month, data]) => ({ month, payout: data.payout, sessions: data.sessions }))
-        .sort((a, b) => a.month.localeCompare(b.month))
+        .sort((a, b) => a.month.localeCompare(b.month)),
+      sessionsBreakdown: entry.sessionsBreakdown.sort((a, b) => {
+        const da = new Date(a.date).getTime()
+        const db = new Date(b.date).getTime()
+        if (isNaN(da) || isNaN(db)) {
+          return 0
+        }
+        return da - db
+      })
     }))
   }
 

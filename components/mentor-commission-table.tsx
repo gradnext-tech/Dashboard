@@ -185,9 +185,6 @@ export function MentorCommissionTable({ data, loading = false }: MentorCommissio
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Avg per Session
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Monthly Breakdown
-                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -224,27 +221,6 @@ export function MentorCommissionTable({ data, loading = false }: MentorCommissio
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm text-gray-900">
                       {formatCurrency(mentor.sessions > 0 ? mentor.totalPayout / mentor.sessions : 0)}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-500">
-                      {mentor.monthlyBreakdown.length > 0 ? (
-                        <div className="space-y-1">
-                          {mentor.monthlyBreakdown.slice(0, 3).map((month, idx) => (
-                            <div key={idx} className="flex justify-between">
-                              <span className="text-xs">{month.month}:</span>
-                              <span className="text-xs font-medium">{formatCurrency(month.payout)}</span>
-                            </div>
-                          ))}
-                          {mentor.monthlyBreakdown.length > 3 && (
-                            <div className="text-xs text-gray-400">
-                              +{mentor.monthlyBreakdown.length - 3} more
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-gray-400">No data</span>
-                      )}
                     </div>
                   </td>
                 </tr>
@@ -295,20 +271,6 @@ export function MentorCommissionTable({ data, loading = false }: MentorCommissio
                     {formatCurrency(mentor.sessions > 0 ? mentor.totalPayout / mentor.sessions : 0)}
                   </p>
                 </div>
-
-                {mentor.monthlyBreakdown.length > 0 && (
-                  <div>
-                    <p className="text-sm text-gray-500 mb-2">Monthly Breakdown</p>
-                    <div className="space-y-1">
-                      {mentor.monthlyBreakdown.map((month, idx) => (
-                        <div key={idx} className="flex justify-between text-sm">
-                          <span className="text-gray-600">{month.month}:</span>
-                          <span className="font-medium">{formatCurrency(month.payout)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             </CardContent>
           </Card>

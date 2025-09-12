@@ -150,30 +150,30 @@ export async function POST(request: NextRequest) {
         const amountInr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(entry.totalPayout)
         const subject = `Your pending payout summary`
         
-        // Create monthly breakdown text
-        const monthlyBreakdownText = entry.monthlyBreakdown.map(month => 
-          `  ${month.month}: ${month.sessions} sessions - ${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(month.payout)}`
+        // Create session-wise breakdown text
+        const sessionBreakdownText = (entry.sessionsBreakdown || []).map(s =>
+          `  ${s.date} - ${s.menteeName}: ${s.sessions} session(s) - ${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(s.payout)}`
         ).join('\n')
         
         const text = `Hi ${entry.mentorName},\n\n` +
           `This is a summary of your pending payout with GradNext.\n\n` +
-          `Monthly Breakdown:\n${monthlyBreakdownText}\n\n` +
+          `Session-wise Breakdown:\n${sessionBreakdownText}\n\n` +
           `Total Sessions: ${entry.sessions}\n` +
           `Total Payout: ${amountInr}\n\n` +
           `We will process the payout after confirmation.\n\n` +
           `Best,\nGradNext`
         
-        // Create monthly breakdown HTML
-        const monthlyBreakdownHtml = entry.monthlyBreakdown.map(month => 
-          `<tr><td>${month.month}</td><td>${month.sessions}</td><td>${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(month.payout)}</td></tr>`
+        // Create session-wise breakdown HTML
+        const sessionBreakdownHtml = (entry.sessionsBreakdown || []).map(s => 
+          `<tr><td>${s.date}</td><td>${s.menteeName}</td><td>${s.sessions}</td><td>${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(s.payout)}</td></tr>`
         ).join('')
         
         const html = `<p>Hi ${entry.mentorName},</p>` +
           `<p>This is a summary of your pending payout with GradNext.</p>` +
-          `<h3>Monthly Breakdown:</h3>` +
+          `<h3>Session-wise Breakdown:</h3>` +
           `<table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; margin: 10px 0;">` +
-          `<thead><tr style="background-color: #f5f5f5;"><th>Month</th><th>Sessions</th><th>Payout</th></tr></thead>` +
-          `<tbody>${monthlyBreakdownHtml}</tbody>` +
+          `<thead><tr style="background-color: #f5f5f5;"><th>Date</th><th>Mentee</th><th>Sessions</th><th>Payout</th></tr></thead>` +
+          `<tbody>${sessionBreakdownHtml}</tbody>` +
           `</table>` +
           `<p><strong>Total Sessions:</strong> ${entry.sessions}</p>` +
           `<p><strong>Total Payout:</strong> ${amountInr}</p>` +
