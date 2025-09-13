@@ -121,7 +121,7 @@ class GoogleSheetsService {
         // Get mentor rate and calculate total payout
         const mentorName = row[7] || ''
         const mentorRate = this.getMentorRate(mentorRates, mentorName)
-        const noOfSessions = parseInt(row[8]) || 1
+        const noOfSessions = 1 // Each row represents 1 session
         const totalPayout = mentorRate * noOfSessions
 
         const payment: PaymentRecord = {
@@ -133,7 +133,7 @@ class GoogleSheetsService {
           sessionStatus: row[12] || '', // Session Status
           rate: mentorRate, // Rate from Rate List sheet
           paymentStatus: (row[17] || '').toLowerCase(), // Payment column
-          noOfSessions: noOfSessions, // Session Number from Master Data
+          noOfSessions: noOfSessions, // Each row = 1 session (Session Number column is just a counter, not quantity)
           totalPayout: totalPayout, // Calculated total payout
           rowIndex: i + 1, // +1 because sheets are 1-indexed
           mentorEmail: row[4] || '', // Mentor Email (column E, index 4)
@@ -534,7 +534,8 @@ class GoogleSheetsService {
     }>()
 
     for (const p of duePayments) {
-      const key = (p.mentorEmail && p.mentorEmail.trim().toLowerCase()) || p.mentorName.toLowerCase().trim()
+      // Use mentor name as primary key to avoid duplicate entries
+      const key = p.mentorName.toLowerCase().trim()
       let existing = aggregation.get(key)
       
       if (!existing) {
@@ -547,6 +548,11 @@ class GoogleSheetsService {
           sessionsBreakdown: []
         }
         aggregation.set(key, existing)
+      } else {
+        // If we already have an entry for this mentor, use the email if current session has one and existing doesn't
+        if (p.mentorEmail && p.mentorEmail.trim() && !existing.mentorEmail) {
+          existing.mentorEmail = p.mentorEmail
+        }
       }
 
       existing.totalPayout += p.totalPayout
@@ -745,10 +751,12 @@ class GoogleSheetsService {
   async getAllDuePaymentsIncludingCorporate(): Promise<PaymentRecord[]> {
     const allPayments = await this.getAllPaymentsIncludingCorporate()
     
-    // Filter payments where Payment Status equals "Due"
-    const duePayments = allPayments.filter(payment => 
-      payment.paymentStatus.toLowerCase().trim() === 'due'
-    )
+    // Filter payments where Payment Status equals "Due" (case-insensitive, trim whitespace)
+    const duePayments = allPayments.filter(payment => {
+      const status = payment.paymentStatus.toLowerCase().trim()
+      return status === 'due'
+    })
+    
     
     // Update S No to be sequential for filtered results
     return duePayments.map((payment, index) => ({
@@ -774,7 +782,10 @@ class GoogleSheetsService {
     }>()
 
     for (const p of allPayments) {
-      const key = (p.mentorEmail && p.mentorEmail.trim().toLowerCase()) || p.mentorName.toLowerCase().trim()
+      // Use mentor name as primary key to avoid duplicate entries
+      const key = p.mentorName.toLowerCase().trim()
+      
+      
       let existing = aggregation.get(key)
       
       if (!existing) {
@@ -786,6 +797,11 @@ class GoogleSheetsService {
           monthlyBreakdown: new Map()
         }
         aggregation.set(key, existing)
+      } else {
+        // If we already have an entry for this mentor, use the email if current session has one and existing doesn't
+        if (p.mentorEmail && p.mentorEmail.trim() && !existing.mentorEmail) {
+          existing.mentorEmail = p.mentorEmail
+        }
       }
 
       existing.totalPayout += p.totalPayout
@@ -808,7 +824,7 @@ class GoogleSheetsService {
       existing.monthlyBreakdown.set(monthKey, monthData)
     }
 
-    return Array.from(aggregation.values()).map(entry => ({
+    const result = Array.from(aggregation.values()).map(entry => ({
       mentorName: entry.mentorName,
       mentorEmail: entry.mentorEmail,
       totalPayout: entry.totalPayout,
@@ -817,6 +833,9 @@ class GoogleSheetsService {
         .map(([month, data]) => ({ month, payout: data.payout, sessions: data.sessions }))
         .sort((a, b) => a.month.localeCompare(b.month))
     }))
+    
+    
+    return result
   }
 
 }
