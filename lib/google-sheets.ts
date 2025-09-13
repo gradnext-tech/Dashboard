@@ -252,10 +252,21 @@ class GoogleSheetsService {
       })
 
       const sheets = spreadsheet.data.sheets || []
-      console.log('Mentor Commission sheet found:', sheets.map((s: any) => s.properties?.title))
+      console.log('Available sheets:', sheets.map((s: any) => s.properties?.title))
 
-      // Get the last S No. from the sheet to continue the sequence
-      const lastSNo = await this.getLastSNoFromMentorCommission(mentorCommissionSheetId)
+      // Find the specific "Mentor commission" sheet
+      const mentorCommissionSheet = sheets.find((s: any) => 
+        s.properties?.title === 'Mentor commission'
+      )
+
+      if (!mentorCommissionSheet) {
+        throw new Error('Mentor commission sheet not found in the spreadsheet')
+      }
+
+      console.log('Found Mentor commission sheet:', mentorCommissionSheet.properties?.title)
+
+      // Get the last S No. from the specific sheet to continue the sequence
+      const lastSNo = await this.getLastSNoFromMentorCommission(mentorCommissionSheetId, 'Mentor commission')
       let currentSNo = lastSNo + 1
 
       // Get mentor rates for calculation
@@ -280,10 +291,10 @@ class GoogleSheetsService {
         ]
       })
 
-      // Append data to the Mentor Commission sheet
+      // Append data to the specific "Mentor commission" sheet
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: mentorCommissionSheetId,
-        range: 'A:I', // Use the first sheet in the Mentor Commission spreadsheet (9 columns with S No.)
+        range: 'Mentor commission!A:I', // Use the specific "Mentor commission" sheet
         valueInputOption: 'RAW',
         insertDataOption: 'INSERT_ROWS',
         resource: {
@@ -291,7 +302,7 @@ class GoogleSheetsService {
         },
       })
 
-      console.log(`Successfully exported ${payments.length} payments to Mentor Commission sheet`)
+      console.log(`Successfully exported ${payments.length} payments to Mentor commission sheet`)
 
       // Update payment status to "Paid" in the Master Copy (Session Info sheet)
       await this.markExportedPaymentsAsPaid(payments)
@@ -356,7 +367,7 @@ class GoogleSheetsService {
       }
 
       // Get the last S No. from the sheet to continue the sequence
-      const lastSNo = await this.getLastSNoFromMentorCommission(mentorCommissionSheetId)
+      const lastSNo = await this.getLastSNoFromMentorCommission(mentorCommissionSheetId, 'Mentor commission')
       const nextSNo = lastSNo + 1
 
       // Get mentor rates for calculation
@@ -382,10 +393,10 @@ class GoogleSheetsService {
         finalTotalPayout      // Calculated total payout
       ]
 
-      // Append data to the Mentor Commission sheet
+      // Append data to the specific "Mentor commission" sheet
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: mentorCommissionSheetId,
-        range: 'A:I', // Use the first sheet in the Mentor Commission spreadsheet (9 columns with S No.)
+        range: 'Mentor commission!A:I', // Use the specific "Mentor commission" sheet
         valueInputOption: 'RAW',
         insertDataOption: 'INSERT_ROWS',
         resource: {
@@ -401,12 +412,12 @@ class GoogleSheetsService {
     }
   }
 
-  async getLastSNoFromMentorCommission(mentorCommissionSheetId: string): Promise<number> {
+  async getLastSNoFromMentorCommission(mentorCommissionSheetId: string, sheetName: string = 'Mentor commission'): Promise<number> {
     try {
-      // Get all data from the Mentor Commission sheet to find the last S No.
+      // Get all data from the specific Mentor Commission sheet to find the last S No.
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: mentorCommissionSheetId,
-        range: 'A:A', // Only get the S No. column
+        range: `${sheetName}!A:A`, // Only get the S No. column from the specific sheet
       })
 
       const rows = response.data.values || []
@@ -428,7 +439,7 @@ class GoogleSheetsService {
         }
       }
 
-      console.log(`Last S No. found in Mentor Commission sheet: ${maxSNo}`)
+      console.log(`Last S No. found in ${sheetName} sheet: ${maxSNo}`)
       return maxSNo
     } catch (error) {
       console.error('Error getting last S No. from Mentor Commission:', error)
@@ -447,10 +458,10 @@ class GoogleSheetsService {
 
       console.log('Fetching mentor rates from Rate List sheet:', rateListSheetId)
 
-      // Get all data from the Rate List sheet (Mentor Name and Rate columns)
+      // Get all data from the Rate List sheet (Full Name and Rate columns)
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: rateListSheetId,
-        range: 'A:B', // Mentor Name (A) and Rate (B) columns
+        range: 'B:M', // Full Name (B) and Rate (M) columns
       })
 
       const rows = response.data.values || []
@@ -463,15 +474,15 @@ class GoogleSheetsService {
       console.log(`Found ${rows.length} rows in Rate List sheet`)
       console.log('First few rows:', rows.slice(0, 3))
 
-      // Process the data (Column A: Mentor Name, Column B: Rate)
+      // Process the data (Column B: Full Name, Column M: Rate)
       const mentorRates: MentorRate[] = []
       
       for (let i = 1; i < rows.length; i++) { // Skip header row
         const row = rows[i]
         if (row.length === 0) continue
 
-        const mentorName = (row[0] || '').trim() // Column A: Mentor Name
-        const rateValue = row[1] || '0' // Column B: Rate
+        const mentorName = (row[0] || '').trim() // Column B: Full Name
+        const rateValue = row[11] || '0' // Column M: Rate (index 11 since we're reading B:M)
         
         // Parse the rate value
         let rate = 0
