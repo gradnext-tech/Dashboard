@@ -644,6 +644,23 @@ class GoogleSheetsService {
             continue
           }
 
+          // Validate header row to ensure correct column structure
+          const headerRow = rows[0] || []
+          const expectedHeaders = ['Sr No.', 'Mentor Name', 'Mentor Email', 'Mentee Name', 'Mentee Email', 'Mentee Phone', 'Date', 'Time', 'Invite Title', 'Invitation Status', 'Mentor Confirmation Status', 'Mentee Confirmation Status', 'Session Status', 'Mentor Feedback', 'Mentee Feedback', 'Payment Status']
+          
+          // Check if this sheet has the expected corporate structure
+          const hasValidStructure = expectedHeaders.every((expectedHeader, index) => {
+            const actualHeader = (headerRow[index] || '').toString().trim()
+            return actualHeader.toLowerCase().includes(expectedHeader.toLowerCase().split(' ')[0]) // Check first word match
+          })
+          
+          if (!hasValidStructure) {
+            console.log(`Skipping sheet ${sheetTitle} - does not have expected corporate structure`)
+            console.log(`Expected headers: ${expectedHeaders.join(', ')}`)
+            console.log(`Actual headers: ${headerRow.slice(0, 16).join(', ')}`)
+            continue
+          }
+
           console.log(`Found ${rows.length} rows in sheet: ${sheetTitle}`)
 
           // Process data rows (skip header)
@@ -651,27 +668,46 @@ class GoogleSheetsService {
             const row = rows[i]
             if (row.length === 0) continue
 
-            // Map the columns based on the expected structure
+            // Parse and format the session date to include 2025
+            let sessionDate = row[6] || ''
+            if (sessionDate && !sessionDate.includes('2025')) {
+              // If the date doesn't contain 2025, add it
+              sessionDate = sessionDate.includes('2025') ? sessionDate : `${sessionDate}, 2025`
+            }
+
+            // Map the columns based on the actual corporate sheet structure
             const corporateSession: CorporateSessionRecord = {
               id: `corporate_${sheetTitle}_${i}`,
               sNo: globalSNo.toString(),
-              mentorName: row[1] || '', // Column B
-              mentorEmail: row[2] || '', // Column C
-              menteeName: sheetTitle, // Sheet name as mentee name
-              menteeEmail: row[3] || '', // Column D
-              menteePhone: row[4] || '', // Column E
-              date: row[5] || '', // Column F
-              time: row[6] || '', // Column G
-              inviteTitle: row[7] || '', // Column H
-              invitationStatus: row[8] || '', // Column I
-              mentorConfirmationStatus: row[9] || '', // Column J
-              menteeConfirmationStatus: row[10] || '', // Column K
-              sessionStatus: row[11] || '', // Column L
-              mentorFeedback: row[12] || '', // Column M
-              menteeFeedback: row[13] || '', // Column N
-              paymentStatus: row[15] || '', // Column P (corrected from O to P)
+              mentorName: row[1] || '', // Column B - Mentor Name
+              mentorEmail: row[2] || '', // Column C - Mentor Email
+              menteeName: row[3] || '', // Column D - Mentee Name (not sheet name)
+              menteeEmail: row[4] || '', // Column E - Mentee Email
+              menteePhone: row[5] || '', // Column F - Mentee Phone
+              date: sessionDate, // Column G - Date with 2025
+              time: row[7] || '', // Column H - Time
+              inviteTitle: row[8] || '', // Column I - Invite Title
+              invitationStatus: row[9] || '', // Column J - Invitation Status
+              mentorConfirmationStatus: row[10] || '', // Column K - Mentor Confirmation Status
+              menteeConfirmationStatus: row[11] || '', // Column L - Mentee Confirmation Status
+              sessionStatus: row[12] || '', // Column M - Session Status
+              mentorFeedback: row[13] || '', // Column N - Mentor Feedback
+              menteeFeedback: row[14] || '', // Column O - Mentee Feedback
+              paymentStatus: row[15] || '', // Column P - Payment Status
               rowIndex: i + 1,
               sheetName: sheetTitle
+            }
+            
+            // Debug: Log first few sessions to verify column mapping
+            if (i <= 3) {
+              console.log(`DEBUG Corporate Session ${i} from ${sheetTitle}:`, {
+                mentorName: corporateSession.mentorName,
+                menteeName: corporateSession.menteeName,
+                originalDate: row[6],
+                processedDate: corporateSession.date,
+                phone: corporateSession.menteePhone,
+                paymentStatus: corporateSession.paymentStatus
+              })
             }
 
             allCorporateSessions.push(corporateSession)
