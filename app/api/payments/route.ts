@@ -161,6 +161,7 @@ export async function POST(request: NextRequest) {
           `Total Sessions: ${entry.sessions}\n` +
           `Total Payout: ${amountInr}\n\n` +
           `We will process the payout after confirmation.\n\n` +
+          `If you have any discrepancies, please contact us at finance@gradnext.co\n\n` +
           `Best,\nGradNext`
         
         // Create session-wise breakdown HTML
@@ -178,7 +179,8 @@ export async function POST(request: NextRequest) {
           `<p><strong>Total Sessions:</strong> ${entry.sessions}</p>` +
           `<p><strong>Total Payout:</strong> ${amountInr}</p>` +
           `<p>We will process the payout after confirmation.</p>` +
-          `<p>Best,<br/>GradNext</p>`
+          `<p>If you have any discrepancies, please contact us at <a href="mailto:finance@gradnext.co">finance@gradnext.co</a></p>` +
+          `<p>Best,<br/>gradnext</p>`
 
         try {
           await transporter.sendMail({ from, to: mentorEmail, subject, text, html })
