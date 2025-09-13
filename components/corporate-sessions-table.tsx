@@ -45,7 +45,8 @@ export function CorporateSessionsTable({ data, loading = false }: CorporateSessi
       session.menteeName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       session.mentorEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
       session.menteeEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      session.inviteTitle.toLowerCase().includes(searchTerm.toLowerCase())
+      session.inviteTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      session.sheetName.toLowerCase().includes(searchTerm.toLowerCase())
     
     const matchesSheet = !filterSheet || 
       session.sheetName.toLowerCase().includes(filterSheet.toLowerCase())
@@ -206,7 +207,7 @@ export function CorporateSessionsTable({ data, loading = false }: CorporateSessi
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
             <input
               type="text"
-              placeholder="Search sessions..."
+              placeholder="Search by company, mentor, mentee, or email..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -320,10 +321,10 @@ export function CorporateSessionsTable({ data, loading = false }: CorporateSessi
                       </div>
                       <div className="ml-3">
                         <div className="text-sm font-medium text-gray-900">
-                          {session.menteeName}
+                          {session.sheetName}
                         </div>
                         <div className="text-sm text-gray-500">
-                          {session.menteeEmail}
+                          {session.menteeName} ({session.menteeEmail})
                         </div>
                       </div>
                     </div>
@@ -401,8 +402,8 @@ export function CorporateSessionsTable({ data, loading = false }: CorporateSessi
                     </div>
                   </div>
                   <div>
-                    <CardTitle className="text-lg">{session.menteeName}</CardTitle>
-                    <CardDescription>{session.mentorName}</CardDescription>
+                    <CardTitle className="text-lg">{session.sheetName}</CardTitle>
+                    <CardDescription>{session.mentorName} • {session.menteeName}</CardDescription>
                   </div>
                 </div>
                 <div className="flex flex-col items-end space-y-1">

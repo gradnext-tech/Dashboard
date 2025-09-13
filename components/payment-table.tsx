@@ -27,7 +27,8 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
     const matchesSearch = !searchTerm || 
       payment.mentorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       payment.menteeName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      payment.id.toLowerCase().includes(searchTerm.toLowerCase())
+      payment.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (payment.sheetName && payment.sheetName.toLowerCase().includes(searchTerm.toLowerCase()))
     
     const matchesMentor = !filterMentor || 
       payment.mentorName.toLowerCase().includes(filterMentor.toLowerCase())
@@ -120,7 +121,7 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
             <input
               type="text"
-              placeholder="Search by mentor, mentee, or ID..."
+              placeholder="Search by mentor, mentee, company, or ID..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -283,9 +284,13 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">
-                        {payment.menteeName}
-                        {isCorporate && (
-                          <span className="ml-2 text-xs text-blue-600 font-normal">(Corporate)</span>
+                        {isCorporate && payment.sheetName ? (
+                          <div>
+                            <div className="font-semibold text-blue-700">{payment.sheetName}</div>
+                            <div className="text-xs text-gray-500">{payment.menteeName}</div>
+                          </div>
+                        ) : (
+                          payment.menteeName
                         )}
                       </div>
                     </td>
@@ -349,9 +354,13 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
                       )}
                     </h3>
                     <p className="text-xs text-gray-500">
-                      Mentee: {payment.menteeName}
-                      {isCorporate && (
-                        <span className="text-blue-600"> (Corporate)</span>
+                      {isCorporate && payment.sheetName ? (
+                        <div>
+                          <div className="text-blue-600 font-medium">{payment.sheetName}</div>
+                          <div>Mentee: {payment.menteeName}</div>
+                        </div>
+                      ) : (
+                        `Mentee: ${payment.menteeName}`
                       )}
                     </p>
                   </div>

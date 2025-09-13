@@ -13,6 +13,7 @@ export interface PaymentRecord {
   totalPayout: number
   rowIndex: number
   mentorEmail?: string
+  sheetName?: string // For corporate sessions
 }
 
 export interface MentorRate {
@@ -755,7 +756,7 @@ class GoogleSheetsService {
         id: session.id,
         sNo: session.sNo,
         mentorName: session.mentorName,
-        menteeName: session.menteeName, // This is the sheet name
+        menteeName: session.menteeName, // This is the actual mentee name
         sessionDate: session.date,
         sessionStatus: session.sessionStatus,
         rate: 0, // We'll need to get this from mentor rates
@@ -763,7 +764,8 @@ class GoogleSheetsService {
         noOfSessions: 1, // Each corporate session is typically 1 session
         totalPayout: 0, // We'll calculate this based on mentor rates
         rowIndex: session.rowIndex,
-        mentorEmail: session.mentorEmail
+        mentorEmail: session.mentorEmail,
+        sheetName: session.sheetName // Add the sheet name for corporate sessions
       }))
 
       // Get mentor rates for calculation
