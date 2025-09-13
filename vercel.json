@@ -3,18 +3,5 @@
     "app/api/payments/route.ts": {
       "maxDuration": 30
     }
-  },
-  "env": {
-    "GOOGLE_SHEETS_PRIVATE_KEY": "@google_sheets_private_key",
-    "GOOGLE_SHEETS_CLIENT_EMAIL": "@google_sheets_client_email",
-    "GOOGLE_SHEET_ID": "@google_sheet_id",
-    "MENTOR_COMMISSION_SHEET_ID": "@mentor_commission_sheet_id",
-    "RATE_LIST_SHEET_ID": "@rate_list_sheet_id",
-    "CORPORATE_SHEET_ID": "@corporate_sheet_id",
-    "SMTP_HOST": "@smtp_host",
-    "SMTP_PORT": "@smtp_port",
-    "SMTP_USER": "@smtp_user",
-    "SMTP_PASS": "@smtp_pass",
-    "FROM_EMAIL": "@from_email"
   }
 }
