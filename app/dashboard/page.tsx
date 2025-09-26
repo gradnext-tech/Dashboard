@@ -148,6 +148,22 @@ export default function Dashboard() {
     }
   }
 
+  const handleMarkMentorCommissionPaid = async (mentorNames: string[]) => {
+    if (!mentorNames || mentorNames.length === 0) return
+    try {
+      for (const mentorName of mentorNames) {
+        await fetch('/api/payments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'markMentorCommissionPaid', mentorName }),
+        })
+      }
+      await fetchMentorCommissions()
+    } catch (error) {
+      console.error('Error marking mentor commissions as paid:', error)
+    }
+  }
+
   const [emailing, setEmailing] = useState(false)
   const handleEmailMentorPayouts = async () => {
     try {
@@ -470,6 +486,7 @@ export default function Dashboard() {
               <MentorCommissionTable
                 data={mentorCommissions}
                 loading={refreshing}
+                onMarkMentorPaid={handleMarkMentorCommissionPaid}
               />
             </CardContent>
           </Card>

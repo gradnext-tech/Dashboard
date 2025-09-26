@@ -41,6 +41,7 @@ export interface CorporateSessionRecord {
   paymentStatus: string
   rowIndex: number
   sheetName: string
+  customRate?: number
 }
 
 
@@ -449,6 +450,62 @@ class GoogleSheetsService {
     }
   }
 
+  async markMentorCommissionRowsAsPaid(mentorName: string): Promise<boolean> {
+    try {
+      const mentorCommissionSheetId = process.env.MENTOR_COMMISSION_SHEET_ID
+      if (!mentorCommissionSheetId) {
+        throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
+      }
+
+      // Read all rows from Mentor commission sheet
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: mentorCommissionSheetId,
+        range: 'Mentor commission!A:I',
+      })
+
+      const rows: string[][] = response.data.values || []
+      if (rows.length <= 1) {
+        return false
+      }
+
+      const normalizedTarget = (mentorName || '').trim().toLowerCase()
+      const updates: Array<{ range: string; values: string[][] }> = []
+
+      // Rows are 1-indexed in Sheets; header is at row 1
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i]
+        const nameCell = (row[1] || '').trim().toLowerCase() // Column B (index 1) = Mentor Name
+        const paymentStatus = (row[6] || '').trim().toLowerCase() // Column G (index 6) = Payment Status
+
+        if (nameCell === normalizedTarget && paymentStatus !== 'paid') {
+          const rowNumber = i + 1
+          updates.push({
+            range: `Mentor commission!G${rowNumber}`,
+            values: [['Paid']],
+          })
+        }
+      }
+
+      if (updates.length === 0) {
+        return false
+      }
+
+      await this.sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: mentorCommissionSheetId,
+        resource: {
+          valueInputOption: 'RAW',
+          data: updates,
+        },
+      })
+
+      console.log(`Marked ${updates.length} Mentor commission rows as Paid for mentor: ${mentorName}`)
+      return true
+    } catch (error) {
+      console.error('Error marking Mentor commission rows as paid:', error)
+      throw error
+    }
+  }
+
   async getMentorRates(): Promise<MentorRate[]> {
     try {
       const rateListSheetId = process.env.RATE_LIST_SHEET_ID
@@ -635,7 +692,7 @@ class GoogleSheetsService {
           // Get data from this sheet
           const response = await this.sheets.spreadsheets.values.get({
             spreadsheetId: corporateSpreadsheetId,
-            range: `${sheetTitle}!A:P`, // Columns A to P for all the required fields
+            range: `${sheetTitle}!A:Z`, // Extend to include potential extra columns such as Mentor Rate
           })
 
           const rows = response.data.values || []
@@ -677,6 +734,25 @@ class GoogleSheetsService {
             }
 
             // Map the columns based on the actual corporate sheet structure
+            // Robustly parse mentor rate if present (currency/text tolerant)
+            const parseRate = (value: any): number | undefined => {
+              if (value === undefined || value === null) return undefined
+              const raw = String(value).trim()
+              if (!raw) return undefined
+              const cleaned = raw.replace(/[^0-9.\-]/g, '')
+              const num = Number(cleaned)
+              return Number.isFinite(num) && num > 0 ? num : undefined
+            }
+
+            // Find Mentor Rate column dynamically if present
+            const mentorRateIndex = headerRow.findIndex((h: string) => (h || '').toString().trim().toLowerCase() === 'mentor rate')
+
+            // Debug logging for Miscellaneous Tracker
+            if (sheetTitle.trim().toLowerCase() === 'miscellaneous tracker') {
+              console.log(`DEBUG Miscellaneous Tracker - Headers:`, headerRow.slice(0, 20))
+              console.log(`DEBUG Miscellaneous Tracker - Mentor Rate Index:`, mentorRateIndex)
+            }
+
             const corporateSession: CorporateSessionRecord = {
               id: `corporate_${sheetTitle}_${i}`,
               sNo: globalSNo.toString(),
@@ -696,18 +772,22 @@ class GoogleSheetsService {
               menteeFeedback: row[14] || '', // Column O - Mentee Feedback
               paymentStatus: row[15] || '', // Column P - Payment Status
               rowIndex: i + 1,
-              sheetName: sheetTitle
+              sheetName: sheetTitle,
+              customRate: (sheetTitle.trim().toLowerCase() === 'miscellaneous tracker' || mentorRateIndex >= 0) ? parseRate(row[mentorRateIndex]) : undefined
             }
             
             // Debug: Log first few sessions to verify column mapping
-            if (i <= 3) {
+            if (i <= 3 || sheetTitle.trim().toLowerCase() === 'miscellaneous tracker') {
               console.log(`DEBUG Corporate Session ${i} from ${sheetTitle}:`, {
                 mentorName: corporateSession.mentorName,
                 menteeName: corporateSession.menteeName,
                 originalDate: row[6],
                 processedDate: corporateSession.date,
                 phone: corporateSession.menteePhone,
-                paymentStatus: corporateSession.paymentStatus
+                paymentStatus: corporateSession.paymentStatus,
+                mentorRateIndex,
+                rawMentorRate: row[mentorRateIndex],
+                parsedCustomRate: corporateSession.customRate
               })
             }
 
@@ -759,10 +839,10 @@ class GoogleSheetsService {
         menteeName: session.menteeName, // This is the actual mentee name
         sessionDate: session.date,
         sessionStatus: session.sessionStatus,
-        rate: 0, // We'll need to get this from mentor rates
+        rate: session.customRate ?? 0, // Prefer custom rate if available
         paymentStatus: session.paymentStatus,
         noOfSessions: 1, // Each corporate session is typically 1 session
-        totalPayout: 0, // We'll calculate this based on mentor rates
+        totalPayout: 0, // Will calculate below
         rowIndex: session.rowIndex,
         mentorEmail: session.mentorEmail,
         sheetName: session.sheetName // Add the sheet name for corporate sessions
@@ -773,9 +853,13 @@ class GoogleSheetsService {
       
       // Calculate rates and payouts for corporate sessions
       corporatePayments.forEach(payment => {
-        const mentorRate = this.getMentorRate(mentorRates, payment.mentorName)
-        payment.rate = mentorRate
-        payment.totalPayout = mentorRate * payment.noOfSessions
+        if (typeof payment.rate === 'number' && isFinite(payment.rate) && payment.rate > 0) {
+          payment.totalPayout = payment.rate * payment.noOfSessions
+        } else {
+          const mentorRate = this.getMentorRate(mentorRates, payment.mentorName)
+          payment.rate = mentorRate
+          payment.totalPayout = mentorRate * payment.noOfSessions
+        }
       })
 
       // Combine regular and corporate payments

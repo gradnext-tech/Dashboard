@@ -211,7 +211,7 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
             className="bg-green-600 hover:bg-green-700"
           >
             <Check className="w-4 h-4 mr-2" />
-            Mark as Paid ({selectedPayments.size})
+            Export ({selectedPayments.size})
           </Button>
         )}
       </div>

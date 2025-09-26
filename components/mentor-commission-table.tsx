@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { User, Mail, DollarSign, Calendar, Search, Filter, TrendingUp } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { User, Mail, DollarSign, Calendar, Search, Filter, TrendingUp, Check } from 'lucide-react'
 
 interface MentorCommissionData {
   mentorName: string
@@ -15,15 +16,18 @@ interface MentorCommissionData {
 interface MentorCommissionTableProps {
   data: MentorCommissionData[]
   loading?: boolean
+  onMarkMentorPaid?: (mentorNames: string[]) => Promise<void>
 }
 
-export function MentorCommissionTable({ data, loading = false }: MentorCommissionTableProps) {
+export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid }: MentorCommissionTableProps) {
   const [searchTerm, setSearchTerm] = useState('')
   const [sortBy, setSortBy] = useState<'name' | 'payout' | 'sessions'>('payout')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [processing, setProcessing] = useState(false)
 
   // Filter and sort data
-  const filteredAndSortedData = data
+  const filteredAndSortedData = useMemo(() => data
     .filter(mentor => 
       mentor.mentorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       mentor.mentorEmail.toLowerCase().includes(searchTerm.toLowerCase())
@@ -42,7 +46,48 @@ export function MentorCommissionTable({ data, loading = false }: MentorCommissio
           break
       }
       return sortOrder === 'asc' ? comparison : -comparison
-    })
+    }), [data, searchTerm, sortBy, sortOrder])
+
+  const toggleAll = (checked: boolean) => {
+    if (checked) {
+      setSelected(new Set(filteredAndSortedData.map(m => m.mentorName)))
+    } else {
+      setSelected(new Set())
+    }
+  }
+
+  const toggleOne = (mentorName: string, checked: boolean) => {
+    const next = new Set(selected)
+    if (checked) next.add(mentorName)
+    else next.delete(mentorName)
+    setSelected(next)
+  }
+
+  const handleBulkMarkPaid = async () => {
+    if (!onMarkMentorPaid) return
+    try {
+      setProcessing(true)
+      await onMarkMentorPaid(Array.from(selected))
+      setSelected(new Set())
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  const handleRowMarkPaid = async (mentorName: string) => {
+    if (!onMarkMentorPaid) return
+    try {
+      setProcessing(true)
+      await onMarkMentorPaid([mentorName])
+      setSelected(prev => {
+        const next = new Set(prev)
+        next.delete(mentorName)
+        return next
+      })
+    } finally {
+      setProcessing(false)
+    }
+  }
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
@@ -170,6 +215,14 @@ export function MentorCommissionTable({ data, loading = false }: MentorCommissio
           <table className="min-w-full divide-y divide-gray-300">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-4 py-3">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all mentors"
+                    checked={selected.size > 0 && filteredAndSortedData.every(m => selected.has(m.mentorName))}
+                    onChange={(e) => toggleAll(e.target.checked)}
+                  />
+                </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Mentor
                 </th>
@@ -185,11 +238,21 @@ export function MentorCommissionTable({ data, loading = false }: MentorCommissio
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Avg per Session
                 </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredAndSortedData.map((mentor, index) => (
                 <tr key={`${mentor.mentorName}-${mentor.mentorEmail}`} className="hover:bg-gray-50">
+                  <td className="px-4 py-4 whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(mentor.mentorName)}
+                      onChange={(e) => toggleOne(mentor.mentorName, e.target.checked)}
+                    />
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
                       <div className="flex-shrink-0 h-8 w-8">
@@ -223,10 +286,37 @@ export function MentorCommissionTable({ data, loading = false }: MentorCommissio
                       {formatCurrency(mentor.sessions > 0 ? mentor.totalPayout / mentor.sessions : 0)}
                     </div>
                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={processing || !onMarkMentorPaid}
+                      onClick={() => handleRowMarkPaid(mentor.mentorName)}
+                      className="bg-green-600 text-white border-green-600 hover:bg-green-700"
+                    >
+                      <Check className="w-4 h-4 mr-2" />
+                      Mark Paid
+                    </Button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+
+        <div className="flex items-center justify-between mt-3">
+          <div className="text-sm text-gray-600">
+            {selected.size} mentor{selected.size === 1 ? '' : 's'} selected
+          </div>
+          <Button
+            onClick={handleBulkMarkPaid}
+            disabled={processing || selected.size === 0 || !onMarkMentorPaid}
+            variant="outline"
+            className="bg-green-600 text-white border-green-600 hover:bg-green-700"
+          >
+            <Check className={`w-4 h-4 mr-2 ${processing ? 'animate-spin' : ''}`} />
+            {processing ? 'Marking...' : 'Mark Selected as Paid'}
+          </Button>
         </div>
       </div>
 
@@ -271,6 +361,20 @@ export function MentorCommissionTable({ data, loading = false }: MentorCommissio
                     {formatCurrency(mentor.sessions > 0 ? mentor.totalPayout / mentor.sessions : 0)}
                   </p>
                 </div>
+
+                {onMarkMentorPaid && (
+                  <div className="pt-2">
+                    <Button
+                      size="sm"
+                      disabled={processing}
+                      onClick={() => handleRowMarkPaid(mentor.mentorName)}
+                      className="w-full bg-green-600 text-white hover:bg-green-700"
+                    >
+                      <Check className="w-4 h-4 mr-2" />
+                      Mark as Paid
+                    </Button>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

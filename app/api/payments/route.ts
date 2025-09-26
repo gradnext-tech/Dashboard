@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { action, paymentIds } = body
+    const { action, paymentIds, mentorName } = body
 
     if (action === 'markPaid') {
       if (!paymentIds || !Array.isArray(paymentIds)) {
@@ -79,6 +79,17 @@ export async function POST(request: NextRequest) {
         success: true, 
         message: `Successfully exported ${duePayments.length} payments to Mentor Commission sheet` 
       })
+    }
+
+    if (action === 'markMentorCommissionPaid') {
+      if (!mentorName || typeof mentorName !== 'string') {
+        return NextResponse.json(
+          { error: 'mentorName is required' },
+          { status: 400 }
+        )
+      }
+      await googleSheetsService.markMentorCommissionRowsAsPaid(mentorName)
+      return NextResponse.json({ success: true })
     }
 
     if (action === 'addManualEntry') {
