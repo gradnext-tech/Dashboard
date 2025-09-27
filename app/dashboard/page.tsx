@@ -180,7 +180,23 @@ export default function Dashboard() {
       if (!response.ok) {
         throw new Error(data.error || 'Failed to email mentor payouts')
       }
-      alert(data.message || 'Emails queued/sent to mentors with pending payouts')
+      
+      // Show detailed summary
+      const summary = data.summary || {}
+      const skippedMentors = data.results?.filter((r: any) => r.status === 'skipped') || []
+      const failedMentors = data.results?.filter((r: any) => r.status === 'failed') || []
+      
+      let alertMessage = data.message || 'Email process completed'
+      
+      if (skippedMentors.length > 0) {
+        alertMessage += `\n\nMentors skipped (no email in RATE_LIST_SHEET):\n${skippedMentors.map((m: any) => `• ${m.mentorName}`).join('\n')}`
+      }
+      
+      if (failedMentors.length > 0) {
+        alertMessage += `\n\nMentors with failed emails:\n${failedMentors.map((m: any) => `• ${m.mentorName} (${m.reason || 'Unknown error'})`).join('\n')}`
+      }
+      
+      alert(alertMessage)
     } catch (error) {
       console.error('Error emailing mentor payouts:', error)
       alert(error instanceof Error ? error.message : 'Failed to email mentor payouts')

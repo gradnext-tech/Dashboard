@@ -125,6 +125,9 @@ export async function POST(request: NextRequest) {
     if (action === 'emailMentorPayouts') {
       // Aggregate due payouts per mentor
       const duePayouts = await googleSheetsService.getDuePayoutsByMentor()
+      
+      // Get mentor details from RATE_LIST_SHEET for emails
+      const mentorDetails = await googleSheetsService.getMentorDetails()
 
       if (!duePayouts || duePayouts.length === 0) {
         return NextResponse.json({ success: true, message: 'No due payouts to email' })
@@ -149,12 +152,28 @@ export async function POST(request: NextRequest) {
         auth: { user, pass },
       })
 
-      // Send emails (skip entries without an email)
-      const results: Array<{ mentorName: string; mentorEmail: string; status: string }> = []
+      // Send emails using mentor details from RATE_LIST_SHEET
+      const results: Array<{ mentorName: string; mentorEmail: string; status: string; reason?: string }> = []
+      let emailsSent = 0
+      let emailsSkipped = 0
+      let emailsFailed = 0
+      
       for (const entry of duePayouts) {
-        const mentorEmail = (entry.mentorEmail || '').trim()
+        // Find mentor email from RATE_LIST_SHEET
+        const mentorDetail = mentorDetails.find(detail => 
+          detail.mentorName.toLowerCase().trim() === entry.mentorName.toLowerCase().trim()
+        )
+        
+        const mentorEmail = mentorDetail?.email?.trim() || ''
+        
         if (!mentorEmail) {
-          results.push({ mentorName: entry.mentorName, mentorEmail: '', status: 'skipped:no-email' })
+          results.push({ 
+            mentorName: entry.mentorName, 
+            mentorEmail: '', 
+            status: 'skipped', 
+            reason: 'No email in RATE_LIST_SHEET' 
+          })
+          emailsSkipped++
           continue
         }
 
@@ -196,12 +215,29 @@ export async function POST(request: NextRequest) {
         try {
           await transporter.sendMail({ from, to: mentorEmail, subject, text, html })
           results.push({ mentorName: entry.mentorName, mentorEmail, status: 'sent' })
+          emailsSent++
         } catch (e) {
-          results.push({ mentorName: entry.mentorName, mentorEmail, status: 'failed' })
+          results.push({ 
+            mentorName: entry.mentorName, 
+            mentorEmail, 
+            status: 'failed', 
+            reason: e instanceof Error ? e.message : 'Unknown error' 
+          })
+          emailsFailed++
         }
       }
 
-      return NextResponse.json({ success: true, results })
+      return NextResponse.json({ 
+        success: true, 
+        results,
+        summary: {
+          total: duePayouts.length,
+          sent: emailsSent,
+          skipped: emailsSkipped,
+          failed: emailsFailed
+        },
+        message: `Email summary: ${emailsSent} sent, ${emailsSkipped} skipped (no email), ${emailsFailed} failed`
+      })
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 })

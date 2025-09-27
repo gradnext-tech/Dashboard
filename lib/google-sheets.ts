@@ -21,6 +21,13 @@ export interface MentorRate {
   rate: number
 }
 
+export interface MentorDetails {
+  mentorName: string
+  email: string
+  phone: string
+  rate: number
+}
+
 export interface CorporateSessionRecord {
   id: string
   sNo: string
@@ -561,6 +568,68 @@ class GoogleSheetsService {
     } catch (error) {
       console.error('Error fetching mentor rates:', error)
       // Return empty array if there's an error
+      return []
+    }
+  }
+
+  async getMentorDetails(): Promise<MentorDetails[]> {
+    try {
+      const rateListSheetId = process.env.RATE_LIST_SHEET_ID
+      
+      if (!rateListSheetId) {
+        throw new Error('RATE_LIST_SHEET_ID is not configured')
+      }
+
+      console.log('Fetching mentor details from Rate List sheet:', rateListSheetId)
+
+      // Get all data from the Rate List sheet (Full Name, Email, Phone, Rate)
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: rateListSheetId,
+        range: 'A:M', // All columns from A to M
+      })
+
+      const rows = response.data.values || []
+      
+      if (rows.length === 0) {
+        console.log('No data found in Rate List sheet')
+        return []
+      }
+
+      console.log(`Found ${rows.length} rows in Rate List sheet for mentor details`)
+
+      // Process the data
+      // Columns: A=Timestamp, B=Full Name, C=Email ID, D=Phone Number, M=Rate
+      const mentorDetails: MentorDetails[] = []
+      
+      for (let i = 1; i < rows.length; i++) { // Skip header row
+        const row = rows[i]
+        if (row.length === 0) continue
+
+        const mentorName = (row[1] || '').trim() // Column B: Full Name
+        const email = (row[2] || '').trim() // Column C: Email ID
+        const phone = (row[3] || '').trim() // Column D: Phone Number
+        const rateValue = row[12] || '0' // Column M: Rate
+        
+        // Parse the rate value
+        let rate = 0
+        if (rateValue && !isNaN(Number(rateValue))) {
+          rate = parseFloat(rateValue)
+        }
+
+        if (mentorName) {
+          mentorDetails.push({
+            mentorName: mentorName.toLowerCase().trim(),
+            email: email,
+            phone: phone,
+            rate: rate
+          })
+        }
+      }
+
+      console.log(`Found ${mentorDetails.length} mentor details from Rate List sheet`)
+      return mentorDetails
+    } catch (error) {
+      console.error('Error fetching mentor details:', error)
       return []
     }
   }
