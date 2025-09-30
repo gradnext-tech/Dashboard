@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { User, Mail, DollarSign, Calendar, Search, Filter, TrendingUp, Check } from 'lucide-react'
+import { User, Mail, DollarSign, Calendar, Search, Filter, TrendingUp, Check, Download } from 'lucide-react'
 
 interface MentorCommissionData {
   mentorName: string
@@ -17,15 +17,17 @@ interface MentorCommissionTableProps {
   data: MentorCommissionData[]
   loading?: boolean
   onMarkMentorPaid?: (mentorNames: string[]) => Promise<void>
+  onExportToMentorCommission?: () => Promise<void>
 }
 
-export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid }: MentorCommissionTableProps) {
+export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid, onExportToMentorCommission }: MentorCommissionTableProps) {
   const [searchTerm, setSearchTerm] = useState('')
   const [sortBy, setSortBy] = useState<'name' | 'payout' | 'sessions'>('payout')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [filterMonth, setFilterMonth] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [processing, setProcessing] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   // Get unique months from mentor commission data for filter dropdown
   const getUniqueMonths = useMemo(() => {
@@ -109,6 +111,16 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid 
     }
   }
 
+  const handleExportToMentorCommission = async () => {
+    if (!onExportToMentorCommission) return
+    try {
+      setExporting(true)
+      await onExportToMentorCommission()
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
       style: 'currency',
@@ -116,8 +128,39 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid 
     }).format(amount)
   }
 
-  const totalCommission = data.reduce((sum, mentor) => sum + mentor.totalPayout, 0)
-  const totalSessions = data.reduce((sum, mentor) => sum + mentor.sessions, 0)
+  // Helper function to get display values based on month filter
+  const getDisplayValues = (mentor: MentorCommissionData) => {
+    if (filterMonth) {
+      const monthData = mentor.monthlyBreakdown.find(m => m.month === filterMonth)
+      return {
+        payout: monthData?.payout || 0,
+        sessions: monthData?.sessions || 0
+      }
+    }
+    return {
+      payout: mentor.totalPayout,
+      sessions: mentor.sessions
+    }
+  }
+
+  // Calculate totals based on filtered data and month filter
+  const { totalCommission, totalSessions } = useMemo(() => {
+    return filteredAndSortedData.reduce((acc, mentor) => {
+      if (filterMonth) {
+        // If month filter is applied, only count data for that specific month
+        const monthData = mentor.monthlyBreakdown.find(m => m.month === filterMonth)
+        if (monthData) {
+          acc.totalCommission += monthData.payout
+          acc.totalSessions += monthData.sessions
+        }
+      } else {
+        // If no month filter, use total payout and sessions
+        acc.totalCommission += mentor.totalPayout
+        acc.totalSessions += mentor.sessions
+      }
+      return acc
+    }, { totalCommission: 0, totalSessions: 0 })
+  }, [filteredAndSortedData, filterMonth])
 
   if (loading) {
     return (
@@ -151,7 +194,7 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid 
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(totalCommission)}</div>
             <p className="text-xs text-muted-foreground">
-              Across {data.length} mentors
+              Across {filteredAndSortedData.length} mentors{filterMonth ? ` (${filterMonth})` : ''}
             </p>
           </CardContent>
         </Card>
@@ -176,10 +219,10 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid 
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatCurrency(data.length > 0 ? totalCommission / data.length : 0)}
+              {formatCurrency(filteredAndSortedData.length > 0 ? totalCommission / filteredAndSortedData.length : 0)}
             </div>
             <p className="text-xs text-muted-foreground">
-              Commission per mentor
+              Commission per mentor{filterMonth ? ` (${filterMonth})` : ''}
             </p>
           </CardContent>
         </Card>
@@ -248,15 +291,28 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid 
           <div className="text-sm text-gray-600">
             {selected.size} mentor{selected.size === 1 ? '' : 's'} selected
           </div>
-          <Button
-            onClick={handleBulkMarkPaid}
-            disabled={processing || selected.size === 0 || !onMarkMentorPaid}
-            variant="outline"
-            className="bg-green-600 text-white border-green-600 hover:bg-green-700"
-          >
-            <Check className={`w-4 h-4 mr-2 ${processing ? 'animate-spin' : ''}`} />
-            {processing ? 'Marking...' : 'Mark Selected as Paid'}
-          </Button>
+          <div className="flex space-x-2">
+            <Button
+              onClick={handleExportToMentorCommission}
+              disabled={exporting || !onExportToMentorCommission}
+              variant="outline"
+              className="bg-blue-600 text-white border-blue-600 hover:bg-blue-700"
+            >
+              <Download className={`w-4 h-4 mr-2 ${exporting ? 'animate-spin' : ''}`} />
+              {exporting ? 'Exporting...' : 'Export to Mentor Commission'}
+            </Button>
+            {onMarkMentorPaid && (
+              <Button
+                onClick={handleBulkMarkPaid}
+                disabled={processing || selected.size === 0}
+                variant="outline"
+                className="bg-green-600 text-white border-green-600 hover:bg-green-700"
+              >
+                <Check className={`w-4 h-4 mr-2 ${processing ? 'animate-spin' : ''}`} />
+                {processing ? 'Marking...' : 'Mark Selected as Paid'}
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -295,62 +351,79 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid 
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredAndSortedData.map((mentor, index) => (
-                <tr key={`${mentor.mentorName}-${mentor.mentorEmail}`} className="hover:bg-gray-50">
-                  <td className="px-4 py-4 whitespace-nowrap">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(mentor.mentorName)}
-                      onChange={(e) => toggleOne(mentor.mentorName, e.target.checked)}
-                    />
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <div className="flex-shrink-0 h-8 w-8">
-                        <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
-                          <User className="h-4 w-4 text-blue-600" />
+              {filteredAndSortedData.map((mentor, index) => {
+                const displayValues = getDisplayValues(mentor)
+                return (
+                  <tr key={`${mentor.mentorName}-${mentor.mentorEmail}`} className="hover:bg-gray-50">
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(mentor.mentorName)}
+                        onChange={(e) => toggleOne(mentor.mentorName, e.target.checked)}
+                      />
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center">
+                        <div className="flex-shrink-0 h-8 w-8">
+                          <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
+                            <User className="h-4 w-4 text-blue-600" />
+                          </div>
+                        </div>
+                        <div className="ml-3">
+                          <div className="text-sm font-medium text-gray-900">
+                            {mentor.mentorName}
+                          </div>
                         </div>
                       </div>
-                      <div className="ml-3">
-                        <div className="text-sm font-medium text-gray-900">
-                          {mentor.mentorName}
-                        </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900 flex items-center">
+                        <Mail className="w-4 h-4 mr-2 text-gray-400" />
+                        {mentor.mentorEmail || 'No email'}
                       </div>
-                    </div>
-                  </td>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-bold text-gray-900">
+                        {formatCurrency(displayValues.payout)}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {displayValues.sessions}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">
+                        {formatCurrency(displayValues.sessions > 0 ? displayValues.payout / displayValues.sessions : 0)}
+                      </div>
+                    </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900 flex items-center">
-                      <Mail className="w-4 h-4 mr-2 text-gray-400" />
-                      {mentor.mentorEmail || 'No email'}
+                    <div className="flex space-x-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={exporting || !onExportToMentorCommission}
+                        onClick={handleExportToMentorCommission}
+                        className="bg-blue-600 text-white border-blue-600 hover:bg-blue-700"
+                      >
+                        <Download className="w-4 h-4 mr-2" />
+                        Export
+                      </Button>
+                      {onMarkMentorPaid && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={processing}
+                          onClick={() => handleRowMarkPaid(mentor.mentorName)}
+                          className="bg-green-600 text-white border-green-600 hover:bg-green-700"
+                        >
+                          <Check className="w-4 h-4 mr-2" />
+                          Mark Paid
+                        </Button>
+                      )}
                     </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-bold text-gray-900">
-                      {formatCurrency(mentor.totalPayout)}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {mentor.sessions}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">
-                      {formatCurrency(mentor.sessions > 0 ? mentor.totalPayout / mentor.sessions : 0)}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={processing || !onMarkMentorPaid}
-                      onClick={() => handleRowMarkPaid(mentor.mentorName)}
-                      className="bg-green-600 text-white border-green-600 hover:bg-green-700"
-                    >
-                      <Check className="w-4 h-4 mr-2" />
-                      Mark Paid
-                    </Button>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -358,48 +431,61 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid 
 
       {/* Mobile Cards */}
       <div className="md:hidden space-y-4">
-        {filteredAndSortedData.map((mentor) => (
-          <Card key={`${mentor.mentorName}-${mentor.mentorEmail}`}>
-            <CardHeader>
-              <div className="flex items-center space-x-3">
-                <div className="flex-shrink-0 h-10 w-10">
-                  <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
-                    <User className="h-5 w-5 text-blue-600" />
+        {filteredAndSortedData.map((mentor) => {
+          const displayValues = getDisplayValues(mentor)
+          return (
+            <Card key={`${mentor.mentorName}-${mentor.mentorEmail}`}>
+              <CardHeader>
+                <div className="flex items-center space-x-3">
+                  <div className="flex-shrink-0 h-10 w-10">
+                    <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
+                      <User className="h-5 w-5 text-blue-600" />
+                    </div>
+                  </div>
+                  <div className="flex-1">
+                    <CardTitle className="text-lg">{mentor.mentorName}</CardTitle>
+                    <CardDescription className="flex items-center">
+                      <Mail className="w-4 h-4 mr-1" />
+                      {mentor.mentorEmail || 'No email'}
+                    </CardDescription>
                   </div>
                 </div>
-                <div className="flex-1">
-                  <CardTitle className="text-lg">{mentor.mentorName}</CardTitle>
-                  <CardDescription className="flex items-center">
-                    <Mail className="w-4 h-4 mr-1" />
-                    {mentor.mentorEmail || 'No email'}
-                  </CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-gray-500">{filterMonth ? `Commission (${filterMonth})` : 'Total Commission'}</p>
+                      <p className="text-lg font-bold text-gray-900">
+                        {formatCurrency(displayValues.payout)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">{filterMonth ? `Sessions (${filterMonth})` : 'Sessions'}</p>
+                      <p className="text-lg font-bold text-gray-900">{displayValues.sessions}</p>
+                    </div>
+                  </div>
+                  
                   <div>
-                    <p className="text-sm text-gray-500">Total Commission</p>
-                    <p className="text-lg font-bold text-gray-900">
-                      {formatCurrency(mentor.totalPayout)}
+                    <p className="text-sm text-gray-500">Average per Session</p>
+                    <p className="text-sm font-medium text-gray-900">
+                      {formatCurrency(displayValues.sessions > 0 ? displayValues.payout / displayValues.sessions : 0)}
                     </p>
                   </div>
-                  <div>
-                    <p className="text-sm text-gray-500">Sessions</p>
-                    <p className="text-lg font-bold text-gray-900">{mentor.sessions}</p>
-                  </div>
-                </div>
-                
-                <div>
-                  <p className="text-sm text-gray-500">Average per Session</p>
-                  <p className="text-sm font-medium text-gray-900">
-                    {formatCurrency(mentor.sessions > 0 ? mentor.totalPayout / mentor.sessions : 0)}
-                  </p>
-                </div>
 
-                {onMarkMentorPaid && (
-                  <div className="pt-2">
+                <div className="pt-2 space-y-2">
+                  {onExportToMentorCommission && (
+                    <Button
+                      size="sm"
+                      disabled={exporting}
+                      onClick={handleExportToMentorCommission}
+                      className="w-full bg-blue-600 text-white hover:bg-blue-700"
+                    >
+                      <Download className="w-4 h-4 mr-2" />
+                      Export to Mentor Commission
+                    </Button>
+                  )}
+                  {onMarkMentorPaid && (
                     <Button
                       size="sm"
                       disabled={processing}
@@ -409,12 +495,13 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid 
                       <Check className="w-4 h-4 mr-2" />
                       Mark as Paid
                     </Button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

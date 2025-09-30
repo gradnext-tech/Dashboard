@@ -8,11 +8,14 @@ import { format } from 'date-fns'
 
 interface PaymentTableProps {
   payments: PaymentRecord[]
-  onMarkAsPaid: (paymentIds: string[]) => Promise<void>
+  onMarkAsPaid?: (paymentIds: string[]) => Promise<void>
   loading?: boolean
+  actionButtonText?: string
+  showMarkAsPaidActions?: boolean
+  showSelection?: boolean
 }
 
-export function PaymentTable({ payments, onMarkAsPaid, loading = false }: PaymentTableProps) {
+export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionButtonText = "Mark as Paid", showMarkAsPaidActions = true, showSelection = true }: PaymentTableProps) {
   const [selectedPayments, setSelectedPayments] = useState<Set<string>>(new Set())
   const [processing, setProcessing] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -94,7 +97,7 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
   }
 
   const handleMarkSelectedAsPaid = async () => {
-    if (selectedPayments.size === 0) return
+    if (selectedPayments.size === 0 || !onMarkAsPaid) return
     
     setProcessing(true)
     try {
@@ -102,6 +105,25 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
       setSelectedPayments(new Set())
     } catch (error) {
       console.error('Error marking payments as paid:', error)
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  const handleMarkIndividualAsPaid = async (paymentId: string) => {
+    if (!onMarkAsPaid) return
+    
+    setProcessing(true)
+    try {
+      await onMarkAsPaid([paymentId])
+      // Remove from selected if it was selected
+      setSelectedPayments(prev => {
+        const next = new Set(prev)
+        next.delete(paymentId)
+        return next
+      })
+    } catch (error) {
+      console.error('Error marking payment as paid:', error)
     } finally {
       setProcessing(false)
     }
@@ -236,33 +258,35 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
       </div>
 
       {/* Actions Bar */}
-      <div className="flex justify-between items-center">
-        <div className="flex items-center space-x-2">
-          <input
-            type="checkbox"
-            checked={selectedPayments.size === filteredPayments.length && filteredPayments.length > 0}
-            onChange={(e) => handleSelectAll(e.target.checked)}
-            className="rounded border-gray-300 text-primary focus:ring-primary"
-          />
-          <span className="text-sm text-gray-600">
-            {selectedPayments.size > 0 
-              ? `${selectedPayments.size} selected`
-              : `Select all (${filteredPayments.length} items)`
-            }
-          </span>
+      {showSelection && (
+        <div className="flex justify-between items-center">
+          <div className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              checked={selectedPayments.size === filteredPayments.length && filteredPayments.length > 0}
+              onChange={(e) => handleSelectAll(e.target.checked)}
+              className="rounded border-gray-300 text-primary focus:ring-primary"
+            />
+            <span className="text-sm text-gray-600">
+              {selectedPayments.size > 0 
+                ? `${selectedPayments.size} selected`
+                : `Select all (${filteredPayments.length} items)`
+              }
+            </span>
+          </div>
+          
+          {selectedPayments.size > 0 && showMarkAsPaidActions && onMarkAsPaid && (
+            <Button
+              onClick={handleMarkSelectedAsPaid}
+              disabled={processing}
+              className="bg-green-600 hover:bg-green-700"
+            >
+              <Check className="w-4 h-4 mr-2" />
+              {actionButtonText} ({selectedPayments.size})
+            </Button>
+          )}
         </div>
-        
-        {selectedPayments.size > 0 && (
-          <Button
-            onClick={handleMarkSelectedAsPaid}
-            disabled={processing}
-            className="bg-green-600 hover:bg-green-700"
-          >
-            <Check className="w-4 h-4 mr-2" />
-            Export ({selectedPayments.size})
-          </Button>
-        )}
-      </div>
+      )}
 
       {/* Desktop Table */}
       <div className="hidden md:block">
@@ -270,14 +294,16 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
           <table className="min-w-full divide-y divide-gray-300">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  <input
-                    type="checkbox"
-                    checked={selectedPayments.size === filteredPayments.length && filteredPayments.length > 0}
-                    onChange={(e) => handleSelectAll(e.target.checked)}
-                    className="rounded border-gray-300 text-primary focus:ring-primary"
-                  />
-                </th>
+                {showSelection && (
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <input
+                      type="checkbox"
+                      checked={selectedPayments.size === filteredPayments.length && filteredPayments.length > 0}
+                      onChange={(e) => handleSelectAll(e.target.checked)}
+                      className="rounded border-gray-300 text-primary focus:ring-primary"
+                    />
+                  </th>
+                )}
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   S No
                 </th>
@@ -302,6 +328,11 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Status
                 </th>
+                {showMarkAsPaidActions && (
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -309,14 +340,16 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
                 const isCorporate = payment.id.startsWith('corporate_')
                 return (
                   <tr key={payment.id} className={`hover:bg-gray-50 ${isCorporate ? 'bg-blue-50' : ''}`}>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <input
-                        type="checkbox"
-                        checked={selectedPayments.has(payment.id)}
-                        onChange={(e) => handleSelectPayment(payment.id, e.target.checked)}
-                        className="rounded border-gray-300 text-primary focus:ring-primary"
-                      />
-                    </td>
+                    {showSelection && (
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <input
+                          type="checkbox"
+                          checked={selectedPayments.has(payment.id)}
+                          onChange={(e) => handleSelectPayment(payment.id, e.target.checked)}
+                          className="rounded border-gray-300 text-primary focus:ring-primary"
+                        />
+                      </td>
+                    )}
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {payment.sNo}
                     </td>
@@ -366,6 +399,20 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
                       }
                     </span>
                   </td>
+                  {showMarkAsPaidActions && (
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={processing || !onMarkAsPaid}
+                        onClick={() => handleMarkIndividualAsPaid(payment.id)}
+                        className="bg-green-600 text-white border-green-600 hover:bg-green-700"
+                      >
+                        <Check className="w-4 h-4 mr-2" />
+                        {actionButtonText}
+                      </Button>
+                    </td>
+                  )}
                 </tr>
                 )
               })}
@@ -382,12 +429,14 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
             <div key={payment.id} className={`bg-white rounded-lg shadow p-4 border ${isCorporate ? 'border-blue-200 bg-blue-50' : ''}`}>
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center space-x-3">
-                  <input
-                    type="checkbox"
-                    checked={selectedPayments.has(payment.id)}
-                    onChange={(e) => handleSelectPayment(payment.id, e.target.checked)}
-                    className="rounded border-gray-300 text-primary focus:ring-primary"
-                  />
+                  {showSelection && (
+                    <input
+                      type="checkbox"
+                      checked={selectedPayments.has(payment.id)}
+                      onChange={(e) => handleSelectPayment(payment.id, e.target.checked)}
+                      className="rounded border-gray-300 text-primary focus:ring-primary"
+                    />
+                  )}
                   <div className="flex-shrink-0 h-8 w-8">
                     <div className={`h-8 w-8 rounded-full flex items-center justify-center ${isCorporate ? 'bg-blue-100' : 'bg-primary'}`}>
                       {isCorporate ? (
@@ -463,6 +512,21 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
                 </span>
               </div>
             </div>
+            
+            {/* Individual Action Button */}
+            {showMarkAsPaidActions && onMarkAsPaid && (
+              <div className="pt-3 border-t border-gray-200">
+                <Button
+                  size="sm"
+                  disabled={processing}
+                  onClick={() => handleMarkIndividualAsPaid(payment.id)}
+                  className="w-full bg-green-600 text-white hover:bg-green-700"
+                >
+                  <Check className="w-4 h-4 mr-2" />
+                  {actionButtonText}
+                </Button>
+              </div>
+            )}
           </div>
           )
         })}

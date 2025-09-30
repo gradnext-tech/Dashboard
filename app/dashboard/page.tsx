@@ -8,9 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { PaymentTable } from '@/components/payment-table'
 import { MentorCommissionTable } from '@/components/mentor-commission-table'
 import { CorporateSessionsTable } from '@/components/corporate-sessions-table'
-import { AddManualEntryForm } from '@/components/add-manual-entry-form'
 import { PaymentRecord, CorporateSessionRecord } from '@/lib/google-sheets'
-import { RefreshCw, LogOut, DollarSign, Clock, CheckCircle, Download, Plus, Users, BarChart3, Building2 } from 'lucide-react'
+import { RefreshCw, LogOut, DollarSign, Clock, CheckCircle, Download, Users, BarChart3, Building2, Mail } from 'lucide-react'
 
 export default function Dashboard() {
   const { isAuthenticated, logout, loading: authLoading } = useAuth()
@@ -24,12 +23,23 @@ export default function Dashboard() {
     monthlyBreakdown: Array<{ month: string; payout: number; sessions: number }>
   }>>([])
   const [corporateSessions, setCorporateSessions] = useState<CorporateSessionRecord[]>([])
+  const [finalPayments, setFinalPayments] = useState<Array<{
+    sNo: number
+    mentorName: string
+    menteeName: string
+    sessionDate: string
+    sessionStatus: string
+    rate: number
+    paymentStatus: string
+    noOfSessions: number
+    totalPayout: number
+    revenuePerSession: number
+    totalRevenue: number
+  }>>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [exporting, setExporting] = useState(false)
-  const [showAddForm, setShowAddForm] = useState(false)
-  const [addingEntry, setAddingEntry] = useState(false)
-  const [activeTab, setActiveTab] = useState<'payments' | 'commissions' | 'corporate'>('payments')
+  const [activeTab, setActiveTab] = useState<'payments' | 'commissions' | 'final-payments'>('payments')
 
   useEffect(() => {
     if (authLoading) return
@@ -42,6 +52,7 @@ export default function Dashboard() {
     fetchPayments()
     fetchMentorCommissions()
     fetchCorporateSessions()
+    fetchFinalPayments()
   }, [isAuthenticated, authLoading, router])
 
   const fetchPayments = async (showDueOnly = true) => {
@@ -94,6 +105,21 @@ export default function Dashboard() {
     }
   }
 
+  const fetchFinalPayments = async () => {
+    try {
+      const response = await fetch('/api/payments?type=final-payments')
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch final payments')
+      }
+      
+      const data = await response.json()
+      setFinalPayments(data.finalPayments || [])
+    } catch (error) {
+      console.error('Error fetching final payments:', error)
+    }
+  }
+
   const handleMarkAsPaid = async (paymentIds: string[]) => {
     try {
       const response = await fetch('/api/payments', {
@@ -111,10 +137,11 @@ export default function Dashboard() {
         throw new Error('Failed to mark payments as paid')
       }
 
-      // Refresh the payments list, mentor commissions, and corporate sessions
+      // Refresh the payments list, mentor commissions, corporate sessions, and final payments
       await fetchPayments()
       await fetchMentorCommissions()
       await fetchCorporateSessions()
+      await fetchFinalPayments()
     } catch (error) {
       console.error('Error marking payments as paid:', error)
     }
@@ -164,6 +191,25 @@ export default function Dashboard() {
     }
   }
 
+  const handleMarkFinalPaymentsPaid = async (paymentIds: string[]) => {
+    if (!paymentIds || paymentIds.length === 0) return
+    try {
+      const response = await fetch('/api/payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'markFinalPaymentsPaid', paymentIds }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to mark final payments as paid')
+      }
+
+      await fetchFinalPayments()
+    } catch (error) {
+      console.error('Error marking final payments as paid:', error)
+    }
+  }
+
   const [emailing, setEmailing] = useState(false)
   const handleEmailMentorPayouts = async () => {
     try {
@@ -205,44 +251,6 @@ export default function Dashboard() {
     }
   }
 
-  const handleAddManualEntry = async (entry: {
-    mentorName: string
-    menteeName: string
-    sessionDate: string
-    sessionStatus: string
-    rate: number
-    paymentStatus: string
-    noOfSessions: number
-    totalPayout: number
-  }) => {
-    try {
-      setAddingEntry(true)
-      const response = await fetch('/api/payments', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'addManualEntry',
-          entry,
-        }),
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Failed to add manual entry')
-      }
-
-      const data = await response.json()
-      alert(data.message || 'Successfully added manual entry to Mentor Commission sheet')
-      setShowAddForm(false)
-    } catch (error) {
-      console.error('Error adding manual entry:', error)
-      alert(error instanceof Error ? error.message : 'Failed to add manual entry')
-    } finally {
-      setAddingEntry(false)
-    }
-  }
 
   if (authLoading || loading) {
     return (
@@ -317,8 +325,8 @@ export default function Dashboard() {
                 }`}
               >
                 <div className="flex items-center">
-                  <DollarSign className="w-4 h-4 mr-2" />
-                  Due Payments
+                  <Mail className="w-4 h-4 mr-2" />
+                  Email Mentor Payouts
                 </div>
               </button>
               <button
@@ -330,21 +338,21 @@ export default function Dashboard() {
                 }`}
               >
                 <div className="flex items-center">
-                  <BarChart3 className="w-4 h-4 mr-2" />
-                  Mentor Commissions
+                  <Download className="w-4 h-4 mr-2" />
+                  Export Mentor Commission
                 </div>
               </button>
               <button
-                onClick={() => setActiveTab('corporate')}
+                onClick={() => setActiveTab('final-payments')}
                 className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === 'corporate'
+                  activeTab === 'final-payments'
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
                 <div className="flex items-center">
-                  <Building2 className="w-4 h-4 mr-2" />
-                  Corporate Sessions
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  Final Payments
                 </div>
               </button>
             </nav>
@@ -424,14 +432,6 @@ export default function Dashboard() {
                 </div>
                   <div className="flex space-x-2">
                     <Button
-                      onClick={() => setShowAddForm(true)}
-                      variant="outline"
-                      className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
-                    >
-                      <Plus className="w-4 h-4 mr-2" />
-                      Add Manual Entry
-                    </Button>
-                    <Button
                       onClick={handleEmailMentorPayouts}
                       disabled={emailing}
                       variant="outline"
@@ -440,19 +440,11 @@ export default function Dashboard() {
                       {emailing ? 'Sending Emails...' : 'Email Mentor Payouts'}
                     </Button>
                     <Button
-                      onClick={handleExportToMentorCommission}
-                      disabled={exporting || duePayments.length === 0}
-                      variant="outline"
-                      className="bg-green-600 hover:bg-green-700 text-white border-green-600"
-                    >
-                      <Download className={`w-4 h-4 mr-2 ${exporting ? 'animate-spin' : ''}`} />
-                      {exporting ? 'Exporting...' : 'Export to Mentor Commission'}
-                    </Button>
-                    <Button
                       onClick={() => {
                         fetchPayments()
                         fetchMentorCommissions()
                         fetchCorporateSessions()
+                        fetchFinalPayments()
                       }}
                       disabled={refreshing}
                       variant="outline"
@@ -466,8 +458,9 @@ export default function Dashboard() {
               <CardContent>
                 <PaymentTable
                   payments={duePayments}
-                  onMarkAsPaid={handleMarkAsPaid}
                   loading={refreshing}
+                  showMarkAsPaidActions={false}
+                  showSelection={false}
                 />
               </CardContent>
             </Card>
@@ -479,9 +472,9 @@ export default function Dashboard() {
             <CardHeader>
               <div className="flex justify-between items-center">
                 <div>
-                  <CardTitle>Mentor Commission Summary</CardTitle>
+                  <CardTitle>Export Mentor Commission</CardTitle>
                   <CardDescription>
-                    Total commission breakdown by mentor (including corporate sessions)
+                    Calculate mentor commissions from Google Sheets and Mentor Commission Sheet, then export all payments
                   </CardDescription>
                 </div>
                 <Button
@@ -489,6 +482,7 @@ export default function Dashboard() {
                     fetchMentorCommissions()
                     fetchPayments()
                     fetchCorporateSessions()
+                    fetchFinalPayments()
                   }}
                   disabled={refreshing}
                   variant="outline"
@@ -502,27 +496,28 @@ export default function Dashboard() {
               <MentorCommissionTable
                 data={mentorCommissions}
                 loading={refreshing}
-                onMarkMentorPaid={handleMarkMentorCommissionPaid}
+                onExportToMentorCommission={handleExportToMentorCommission}
               />
             </CardContent>
           </Card>
         )}
 
-        {activeTab === 'corporate' && (
+        {activeTab === 'final-payments' && (
           <Card>
             <CardHeader>
               <div className="flex justify-between items-center">
                 <div>
-                  <CardTitle>Corporate Sessions</CardTitle>
+                  <CardTitle>Final Payments</CardTitle>
                   <CardDescription>
-                    Corporate session data from multiple company sheets
+                    Payments from Mentor Commission Sheet with status "Due" - Mark as Paid only
                   </CardDescription>
                 </div>
                 <Button
                   onClick={() => {
-                    fetchCorporateSessions()
+                    fetchFinalPayments()
                     fetchPayments()
                     fetchMentorCommissions()
+                    fetchCorporateSessions()
                   }}
                   disabled={refreshing}
                   variant="outline"
@@ -533,23 +528,28 @@ export default function Dashboard() {
               </div>
             </CardHeader>
             <CardContent>
-              <CorporateSessionsTable
-                data={corporateSessions}
+              <PaymentTable
+                payments={finalPayments.map((fp, index) => ({
+                  id: `final_${fp.sNo}`,
+                  sNo: fp.sNo.toString(),
+                  mentorName: fp.mentorName,
+                  menteeName: fp.menteeName,
+                  sessionDate: fp.sessionDate,
+                  sessionStatus: fp.sessionStatus,
+                  rate: fp.rate,
+                  paymentStatus: fp.paymentStatus,
+                  noOfSessions: fp.noOfSessions,
+                  totalPayout: fp.totalPayout,
+                  rowIndex: index + 1
+                }))}
+                onMarkAsPaid={handleMarkFinalPaymentsPaid}
                 loading={refreshing}
+                actionButtonText="Mark as Paid"
               />
             </CardContent>
           </Card>
         )}
       </div>
-
-      {/* Add Manual Entry Form Modal */}
-      {showAddForm && (
-        <AddManualEntryForm
-          onAdd={handleAddManualEntry}
-          onClose={() => setShowAddForm(false)}
-          loading={addingEntry}
-        />
-      )}
     </div>
   )
 }

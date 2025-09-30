@@ -22,6 +22,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ payments: allPayments })
     }
 
+    if (type === 'final-payments') {
+      const finalPayments = await googleSheetsService.getFinalPaymentsFromMentorCommissionSheet()
+      return NextResponse.json({ finalPayments })
+    }
+
     let payments
     if (type === 'due') {
       payments = await googleSheetsService.getDuePayments()
@@ -122,9 +127,21 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    if (action === 'markFinalPaymentsPaid') {
+      if (!paymentIds || !Array.isArray(paymentIds)) {
+        return NextResponse.json(
+          { error: 'Invalid payment IDs' },
+          { status: 400 }
+        )
+      }
+
+      await googleSheetsService.markFinalPaymentsAsPaid(paymentIds)
+      return NextResponse.json({ success: true })
+    }
+
     if (action === 'emailMentorPayouts') {
-      // Aggregate due payouts per mentor
-      const duePayouts = await googleSheetsService.getDuePayoutsByMentor()
+      // Aggregate due payouts per mentor (including corporate sessions)
+      const duePayouts = await googleSheetsService.getDuePayoutsByMentorIncludingCorporate()
       
       // Get mentor details from RATE_LIST_SHEET for emails
       const mentorDetails = await googleSheetsService.getMentorDetails()
@@ -186,12 +203,12 @@ export async function POST(request: NextRequest) {
         ).join('\n')
         
         const text = `Hi ${entry.mentorName},\n\n` +
-          `This is a summary of your pending payout with GradNext.\n\n` +
+          `This is a summary of your pending payout with gradnext.\n\n` +
           `Session-wise Breakdown:\n${sessionBreakdownText}\n\n` +
           `Total Sessions: ${entry.sessions}\n` +
           `Total Payout: ${amountInr}\n\n` +
           `We will process the payout after confirmation.\n\n` +
-          `If you have any discrepancies, please contact us at finance@gradnext.co\n\n` +
+          `If you have any discrepancies, please contact us at finance@gradnext.co or contact +91 8320447769\n\n` +
           `Best,\nGradNext`
         
         // Create session-wise breakdown HTML
