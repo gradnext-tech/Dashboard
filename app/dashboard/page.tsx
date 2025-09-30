@@ -9,7 +9,7 @@ import { PaymentTable } from '@/components/payment-table'
 import { MentorCommissionTable } from '@/components/mentor-commission-table'
 import { CorporateSessionsTable } from '@/components/corporate-sessions-table'
 import { PaymentRecord, CorporateSessionRecord } from '@/lib/google-sheets'
-import { RefreshCw, LogOut, DollarSign, Clock, CheckCircle, Download, Users, BarChart3, Building2, Mail } from 'lucide-react'
+import { RefreshCw, LogOut, DollarSign, Clock, CheckCircle, Send, Users, BarChart3, Building2, Mail } from 'lucide-react'
 
 export default function Dashboard() {
   const { isAuthenticated, logout, loading: authLoading } = useAuth()
@@ -338,7 +338,7 @@ export default function Dashboard() {
                 }`}
               >
                 <div className="flex items-center">
-                  <Download className="w-4 h-4 mr-2" />
+                  <Send className="w-4 h-4 mr-2" />
                   Export Mentor Commission
                 </div>
               </button>

@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { User, Mail, DollarSign, Calendar, Search, Filter, TrendingUp, Check, Download } from 'lucide-react'
+import { User, Mail, DollarSign, Calendar, Search, Filter, TrendingUp, Check, Send } from 'lucide-react'
 
 interface MentorCommissionData {
   mentorName: string
@@ -147,14 +147,12 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
   const { totalCommission, totalSessions } = useMemo(() => {
     return filteredAndSortedData.reduce((acc, mentor) => {
       if (filterMonth) {
-        // If month filter is applied, only count data for that specific month
         const monthData = mentor.monthlyBreakdown.find(m => m.month === filterMonth)
         if (monthData) {
           acc.totalCommission += monthData.payout
           acc.totalSessions += monthData.sessions
         }
       } else {
-        // If no month filter, use total payout and sessions
         acc.totalCommission += mentor.totalPayout
         acc.totalSessions += mentor.sessions
       }
@@ -298,7 +296,7 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
               variant="outline"
               className="bg-blue-600 text-white border-blue-600 hover:bg-blue-700"
             >
-              <Download className={`w-4 h-4 mr-2 ${exporting ? 'animate-spin' : ''}`} />
+              <Send className={`w-4 h-4 mr-2 ${exporting ? 'animate-spin' : ''}`} />
               {exporting ? 'Exporting...' : 'Export to Mentor Commission'}
             </Button>
             {onMarkMentorPaid && (
@@ -404,7 +402,7 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
                         onClick={handleExportToMentorCommission}
                         className="bg-blue-600 text-white border-blue-600 hover:bg-blue-700"
                       >
-                        <Download className="w-4 h-4 mr-2" />
+                        <Send className="w-4 h-4 mr-2" />
                         Export
                       </Button>
                       {onMarkMentorPaid && (
@@ -481,7 +479,7 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
                       onClick={handleExportToMentorCommission}
                       className="w-full bg-blue-600 text-white hover:bg-blue-700"
                     >
-                      <Download className="w-4 h-4 mr-2" />
+                      <Send className="w-4 h-4 mr-2" />
                       Export to Mentor Commission
                     </Button>
                   )}

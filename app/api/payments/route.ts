@@ -204,11 +204,11 @@ export async function POST(request: NextRequest) {
         
         const text = `Hi ${entry.mentorName},\n\n` +
           `This is a summary of your pending payout with gradnext.\n\n` +
-          `Session-wise Breakdown:\n${sessionBreakdownText}\n\n` +
           `Total Sessions: ${entry.sessions}\n` +
           `Total Payout: ${amountInr}\n\n` +
+          `Session-wise Breakdown:\n${sessionBreakdownText}\n\n` +
           `We will process the payout after confirmation.\n\n` +
-          `If you have any discrepancies, please contact us at finance@gradnext.co or contact +91 8320447769\n\n` +
+          `If you have any discrepancies, contact +91 8320447769\n\n` +
           `Best,\nGradNext`
         
         // Create session-wise breakdown HTML
@@ -217,7 +217,7 @@ export async function POST(request: NextRequest) {
         ).join('')
         
         const html = `<p>Hi ${entry.mentorName},</p>` +
-          `<p>This is a summary of your pending payout with GradNext.</p>` +
+          `<p>This is a summary of your pending payout with gradnext</p>` +
           `<h3>Session-wise Breakdown:</h3>` +
           `<table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; margin: 10px 0;">` +
           `<thead><tr style="background-color: #f5f5f5;"><th>Date</th><th>Mentee</th><th>Sessions</th><th>Payout</th></tr></thead>` +
@@ -226,7 +226,7 @@ export async function POST(request: NextRequest) {
           `<p><strong>Total Sessions:</strong> ${entry.sessions}</p>` +
           `<p><strong>Total Payout:</strong> ${amountInr}</p>` +
           `<p>We will process the payout after confirmation.</p>` +
-          `<p>If you have any discrepancies, please contact us at <a href="mailto:finance@gradnext.co">finance@gradnext.co</a></p>` +
+          `<p>If you have any discrepancies, please contact us at <a href="mailto:finance@gradnext.co">finance@gradnext.co</a> or contact +91 8320447769</p>` +
           `<p>Best,<br/>gradnext</p>`
 
         try {
