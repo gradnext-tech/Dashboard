@@ -360,7 +360,10 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-800">
-                      {payment.paymentStatus || 'Due'}
+                      {payment.paymentStatus ? 
+                        payment.paymentStatus.charAt(0).toUpperCase() + payment.paymentStatus.slice(1).toLowerCase() 
+                        : 'Due'
+                      }
                     </span>
                   </td>
                 </tr>
@@ -414,7 +417,10 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
                   </div>
                 </div>
               <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-800">
-                {payment.paymentStatus || 'Pending'}
+                {payment.paymentStatus ? 
+                  payment.paymentStatus.charAt(0).toUpperCase() + payment.paymentStatus.slice(1).toLowerCase() 
+                  : 'Due'
+                }
               </span>
             </div>
             
