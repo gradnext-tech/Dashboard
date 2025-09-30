@@ -257,75 +257,67 @@ class GoogleSheetsService {
 
       const sheets = spreadsheet.data.sheets || []
 
-      // Find the specific "Mentor commission" sheet
-      const mentorCommissionSheet = sheets.find((s: any) => 
-        s.properties?.title === 'Mentor commission'
+      // Find the specific "Mentor Commission" sheet
+      let mentorCommissionSheet = sheets.find((s: any) => 
+        s.properties?.title === 'Mentor Commission'
       )
 
+      // If the sheet doesn't exist, create it
       if (!mentorCommissionSheet) {
-        throw new Error('Mentor commission sheet not found in the spreadsheet')
+        console.log('Mentor commission sheet not found, creating it...')
+        
+        const addSheetRequest = {
+          spreadsheetId: mentorCommissionSheetId,
+          resource: {
+            requests: [{
+              addSheet: {
+                properties: {
+                  title: 'Mentor Commission'
+                }
+              }
+            }]
+          }
+        }
+        
+        await this.sheets.spreadsheets.batchUpdate(addSheetRequest)
+        
+        // Add headers to the new sheet
+        const headers = [
+          'S No.', 'Mentor Name', 'Mentee Name', 'Session Date', 
+          'Session Status', 'Rate', 'Payment Status', 'No. of Sessions', 
+          'Total Payout', 'Revenue per session', 'Total Revenue'
+        ]
+        
+        await this.sheets.spreadsheets.values.update({
+          spreadsheetId: mentorCommissionSheetId,
+          range: 'Mentor Commission!A1:K1',
+          valueInputOption: 'RAW',
+          resource: {
+            values: [headers]
+          }
+        })
+        
+        console.log('Mentor commission sheet created successfully')
       }
 
 
       // Get the last S No. from the specific sheet to continue the sequence
-      const lastSNo = await this.getLastSNoFromMentorCommission(mentorCommissionSheetId, 'Mentor commission')
+      const lastSNo = await this.getLastSNoFromMentorCommission(mentorCommissionSheetId, 'Mentor Commission')
       let currentSNo = lastSNo + 1
 
       // Get mentor rates for calculation
       const mentorRates = await this.getMentorRates()
       
-      // Get mentor details (including emails) from RATE_LIST_SHEET
-      const mentorDetails = await this.getMentorDetails()
-
-      // Prepare data for export (with auto-generated S No., calculated rates, and emails from RATE_LIST_SHEET)
+      // Prepare data for export (with auto-generated S No. and calculated rates)
       const exportData = payments.map(payment => {
         const mentorRate = this.getMentorRate(mentorRates, payment.mentorName)
         const totalPayout = mentorRate * payment.noOfSessions
         const revenuePerSession = mentorRate // Revenue per session is the same as rate
         const totalRevenue = mentorRate * payment.noOfSessions // Total revenue is rate * sessions
         
-        // Find mentor email from RATE_LIST_SHEET with improved matching
-        const paymentMentorName = payment.mentorName.toLowerCase().trim()
-        
-        // Try exact match first
-        let mentorDetail = mentorDetails.find(detail => 
-          detail.mentorName === paymentMentorName
-        )
-        
-        // If no exact match, try fuzzy matching
-        if (!mentorDetail) {
-          // Remove extra spaces and try again
-          const normalizedPaymentName = paymentMentorName.replace(/\s+/g, ' ')
-          mentorDetail = mentorDetails.find(detail => 
-            detail.mentorName.replace(/\s+/g, ' ') === normalizedPaymentName
-          )
-        }
-        
-        // If still no match, try partial matching (first name + last name)
-        if (!mentorDetail) {
-          const paymentNameParts = paymentMentorName.split(' ').filter(part => part.length > 0)
-          if (paymentNameParts.length >= 2) {
-            const firstName = paymentNameParts[0]
-            const lastName = paymentNameParts[paymentNameParts.length - 1]
-            
-            mentorDetail = mentorDetails.find(detail => {
-              const detailParts = detail.mentorName.split(' ').filter(part => part.length > 0)
-              if (detailParts.length >= 2) {
-                const detailFirstName = detailParts[0]
-                const detailLastName = detailParts[detailParts.length - 1]
-                return firstName === detailFirstName && lastName === detailLastName
-              }
-              return false
-            })
-          }
-        }
-        
-        const mentorEmail = mentorDetail?.email?.trim() || ''
-        
         return [
-          currentSNo++,          // Auto-generated S No.
+          currentSNo++,          // S No.
           payment.mentorName,    // Mentor Name
-          mentorEmail,           // Mentor Email from RATE_LIST_SHEET
           payment.menteeName,    // Mentee Name
           payment.sessionDate,   // Session Date
           payment.sessionStatus === 'Done' ? 'Completed' : payment.sessionStatus, // Session Status (Done -> Completed)
@@ -338,10 +330,10 @@ class GoogleSheetsService {
         ]
       })
 
-      // Append data to the specific "Mentor commission" sheet
+      // Append data to the specific "Mentor Commission" sheet
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: mentorCommissionSheetId,
-        range: 'Mentor commission!A:L', // Use the specific "Mentor commission" sheet (now includes email and revenue columns)
+        range: 'Mentor Commission!A:K', // Use the specific "Mentor Commission" sheet (11 columns: S No. to Total Revenue)
         valueInputOption: 'RAW',
         insertDataOption: 'INSERT_ROWS',
         resource: {
@@ -363,29 +355,62 @@ class GoogleSheetsService {
   async markExportedPaymentsAsPaid(payments: PaymentRecord[]): Promise<boolean> {
     try {
       const spreadsheetId = process.env.GOOGLE_SHEET_ID
+      const corporateSpreadsheetId = process.env.CORPORATE_SHEET_ID
       
       if (!spreadsheetId) {
         throw new Error('GOOGLE_SHEET_ID is not configured')
       }
 
-      // Prepare batch update requests to mark all exported payments as "Paid"
-      const requests = payments.map(payment => ({
-        range: `Session Info!R${payment.rowIndex}`, // Column R is Payment Status in Session Info sheet
-        values: [['Paid']],
-      }))
+      // Separate regular payments from corporate payments
+      const regularPayments = payments.filter(payment => !payment.sheetName)
+      const corporatePayments = payments.filter(payment => payment.sheetName)
 
-      if (requests.length === 0) {
-        return false
+      // Handle regular payments (Session Info sheet)
+      if (regularPayments.length > 0) {
+        const regularRequests = regularPayments.map(payment => ({
+          range: `Session Info!R${payment.rowIndex}`, // Column R is Payment Status in Session Info sheet
+          values: [['Paid']],
+        }))
+
+        await this.sheets.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          resource: {
+            valueInputOption: 'RAW',
+            data: regularRequests,
+          },
+        })
       }
 
-      // Perform batch update to mark all as paid
-      await this.sheets.spreadsheets.values.batchUpdate({
-        spreadsheetId,
-        resource: {
-          valueInputOption: 'RAW',
-          data: requests,
-        },
-      })
+      // Handle corporate payments (Corporate spreadsheet)
+      if (corporatePayments.length > 0 && corporateSpreadsheetId) {
+        // Group corporate payments by sheet name
+        const corporatePaymentsBySheet = new Map<string, PaymentRecord[]>()
+        corporatePayments.forEach(payment => {
+          const sheetName = payment.sheetName!
+          if (!corporatePaymentsBySheet.has(sheetName)) {
+            corporatePaymentsBySheet.set(sheetName, [])
+          }
+          corporatePaymentsBySheet.get(sheetName)!.push(payment)
+        })
+
+        // Update each corporate sheet
+        const sheetNames = Array.from(corporatePaymentsBySheet.keys())
+        for (const sheetName of sheetNames) {
+          const sheetPayments = corporatePaymentsBySheet.get(sheetName)!
+          const corporateRequests = sheetPayments.map((payment: PaymentRecord) => ({
+            range: `${sheetName}!P${payment.rowIndex}`, // Column P is Payment Status in corporate sheets
+            values: [['Paid']],
+          }))
+
+          await this.sheets.spreadsheets.values.batchUpdate({
+            spreadsheetId: corporateSpreadsheetId,
+            resource: {
+              valueInputOption: 'RAW',
+              data: corporateRequests,
+            },
+          })
+        }
+      }
 
       return true
     } catch (error) {
@@ -412,7 +437,7 @@ class GoogleSheetsService {
       }
 
       // Get the last S No. from the sheet to continue the sequence
-      const lastSNo = await this.getLastSNoFromMentorCommission(mentorCommissionSheetId, 'Mentor commission')
+      const lastSNo = await this.getLastSNoFromMentorCommission(mentorCommissionSheetId, 'Mentor Commission')
       const nextSNo = lastSNo + 1
 
       // Get mentor rates for calculation
@@ -425,22 +450,27 @@ class GoogleSheetsService {
 
 
       // Prepare data for manual entry (with auto-generated S No. and calculated rates)
+      const revenuePerSession = finalRate // Revenue per session is the same as rate
+      const totalRevenue = finalRate * entry.noOfSessions // Total revenue is rate * sessions
+      
       const entryData = [
-        nextSNo,              // Auto-generated S No.
-        entry.mentorName,
-        entry.menteeName,
-        entry.sessionDate,
-        entry.sessionStatus,
-        finalRate,            // Rate from rates sheet or provided rate
-        entry.paymentStatus,
-        entry.noOfSessions,
-        finalTotalPayout      // Calculated total payout
+        nextSNo,              // S No.
+        entry.mentorName,     // Mentor Name
+        entry.menteeName,     // Mentee Name
+        entry.sessionDate,    // Session Date
+        entry.sessionStatus,  // Session Status
+        finalRate,            // Rate
+        entry.paymentStatus,  // Payment Status
+        entry.noOfSessions,   // No. of Sessions
+        finalTotalPayout,     // Total Payout
+        revenuePerSession,    // Revenue per session
+        totalRevenue          // Total Revenue
       ]
 
-      // Append data to the specific "Mentor commission" sheet
+      // Append data to the specific "Mentor Commission" sheet
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: mentorCommissionSheetId,
-        range: 'Mentor commission!A:I', // Use the specific "Mentor commission" sheet
+        range: 'Mentor Commission!A:K', // Use the specific "Mentor Commission" sheet
         valueInputOption: 'RAW',
         insertDataOption: 'INSERT_ROWS',
         resource: {
@@ -455,7 +485,7 @@ class GoogleSheetsService {
     }
   }
 
-  async getLastSNoFromMentorCommission(mentorCommissionSheetId: string, sheetName: string = 'Mentor commission'): Promise<number> {
+  async getLastSNoFromMentorCommission(mentorCommissionSheetId: string, sheetName: string = 'Mentor Commission'): Promise<number> {
     try {
       // Get all data from the specific Mentor Commission sheet to find the last S No.
       const response = await this.sheets.spreadsheets.values.get({
@@ -1077,7 +1107,14 @@ class GoogleSheetsService {
       monthlyBreakdown: Array.from(entry.monthlyBreakdown.entries())
         .map(([month, data]) => ({ month, payout: data.payout, sessions: data.sessions }))
         .sort((a, b) => a.month.localeCompare(b.month)),
-      sessionsBreakdown: entry.sessionsBreakdown
+      sessionsBreakdown: entry.sessionsBreakdown.sort((a, b) => {
+        const da = new Date(a.date).getTime()
+        const db = new Date(b.date).getTime()
+        if (isNaN(da) || isNaN(db)) {
+          return 0
+        }
+        return da - db
+      })
     }))
     
     
@@ -1157,6 +1194,7 @@ class GoogleSheetsService {
     }
   }
 
+
   async markFinalPaymentsAsPaid(paymentIds: string[]): Promise<boolean> {
     try {
       const mentorCommissionSheetId = process.env.MENTOR_COMMISSION_SHEET_ID
@@ -1218,6 +1256,77 @@ class GoogleSheetsService {
       return true
     } catch (error) {
       console.error('Error marking final payments as paid:', error)
+      throw error
+    }
+  }
+
+  async aggregatePaymentsByMentor(payments: PaymentRecord[]) {
+    try {
+      // Group payments by mentor
+      const mentorGroups = payments.reduce((acc, payment) => {
+        if (!acc[payment.mentorName]) {
+          acc[payment.mentorName] = []
+        }
+        acc[payment.mentorName].push(payment)
+        return acc
+      }, {} as Record<string, PaymentRecord[]>)
+
+      // Convert to the expected format
+      const result = Object.entries(mentorGroups).map(([mentorName, mentorPayments]) => {
+        const totalPayout = mentorPayments.reduce((sum, p) => sum + (p.totalPayout || 0), 0)
+        const sessions = mentorPayments.length
+
+        // Group by month for breakdown
+        const monthlyBreakdown = mentorPayments.reduce((acc, payment) => {
+          if (!payment.sessionDate) return acc
+          
+          try {
+            const date = new Date(payment.sessionDate)
+            if (isNaN(date.getTime())) return acc
+            
+            const monthKey = date.toLocaleDateString('en-IN', { year: 'numeric', month: 'long' })
+            
+            if (!acc[monthKey]) {
+              acc[monthKey] = { payout: 0, sessions: 0 }
+            }
+            
+            acc[monthKey].payout += payment.totalPayout || 0
+            acc[monthKey].sessions += 1
+            
+            return acc
+          } catch (e) {
+            return acc
+          }
+        }, {} as Record<string, { payout: number; sessions: number }>)
+
+        return {
+          mentorName,
+          totalPayout,
+          sessions,
+          monthlyBreakdown: Object.entries(monthlyBreakdown).map(([month, data]) => ({
+            month,
+            payout: data.payout,
+            sessions: data.sessions
+          })),
+          sessionsBreakdown: mentorPayments.map(payment => ({
+            date: payment.sessionDate || '',
+            menteeName: payment.menteeName || '',
+            sessions: 1,
+            payout: payment.totalPayout || 0
+          })).sort((a, b) => {
+            const da = new Date(a.date).getTime()
+            const db = new Date(b.date).getTime()
+            if (isNaN(da) || isNaN(db)) {
+              return 0
+            }
+            return da - db
+          })
+        }
+      })
+
+      return result
+    } catch (error) {
+      console.error('Error aggregating payments by mentor:', error)
       throw error
     }
   }

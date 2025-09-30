@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { User, Mail, DollarSign, Calendar, Search, Filter, TrendingUp, Check, Send } from 'lucide-react'
+import { MultiSelect, MultiSelectOption } from '@/components/ui/multi-select'
 
 interface MentorCommissionData {
   mentorName: string
@@ -17,29 +18,40 @@ interface MentorCommissionTableProps {
   data: MentorCommissionData[]
   loading?: boolean
   onMarkMentorPaid?: (mentorNames: string[]) => Promise<void>
-  onExportToMentorCommission?: () => Promise<void>
+  onExportToMentorCommission?: (filteredData?: { mentors: string[], months: string[] }) => Promise<void>
 }
 
 export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid, onExportToMentorCommission }: MentorCommissionTableProps) {
   const [searchTerm, setSearchTerm] = useState('')
   const [sortBy, setSortBy] = useState<'name' | 'payout' | 'sessions'>('payout')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
-  const [filterMonth, setFilterMonth] = useState('')
+  const [filterMonths, setFilterMonths] = useState<string[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [processing, setProcessing] = useState(false)
   const [exporting, setExporting] = useState(false)
 
   // Get unique months from mentor commission data for filter dropdown
   const getUniqueMonths = useMemo(() => {
-    const months = new Set<string>()
+    const monthsWithDates = new Map<string, Date>()
     data.forEach(mentor => {
       mentor.monthlyBreakdown.forEach(monthData => {
         if (monthData.month && monthData.month !== 'Unknown Month') {
-          months.add(monthData.month)
+          try {
+            // Parse the month string back to date for proper sorting
+            const [monthName, year] = monthData.month.split(' ')
+            const monthIndex = new Date(`${monthName} 1, ${year}`).getMonth()
+            const dateKey = new Date(parseInt(year), monthIndex, 1)
+            monthsWithDates.set(monthData.month, dateKey)
+          } catch (e) {
+            // Skip invalid month formats
+          }
         }
       })
     })
-    return Array.from(months).sort()
+    // Sort by actual date instead of string
+    return Array.from(monthsWithDates.entries())
+      .sort(([, dateA], [, dateB]) => dateA.getTime() - dateB.getTime())
+      .map(([monthKey]) => monthKey)
   }, [data])
 
   // Filter and sort data
@@ -48,8 +60,8 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
       const matchesSearch = mentor.mentorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         mentor.mentorEmail.toLowerCase().includes(searchTerm.toLowerCase())
       
-      const matchesMonth = !filterMonth || mentor.monthlyBreakdown.some(monthData => 
-        monthData.month === filterMonth
+      const matchesMonth = filterMonths.length === 0 || mentor.monthlyBreakdown.some(monthData => 
+        filterMonths.includes(monthData.month)
       )
       
       return matchesSearch && matchesMonth
@@ -68,7 +80,7 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
           break
       }
       return sortOrder === 'asc' ? comparison : -comparison
-    }), [data, searchTerm, filterMonth, sortBy, sortOrder])
+    }), [data, searchTerm, filterMonths, sortBy, sortOrder])
 
   const toggleAll = (checked: boolean) => {
     if (checked) {
@@ -115,7 +127,34 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
     if (!onExportToMentorCommission) return
     try {
       setExporting(true)
-      await onExportToMentorCommission()
+      // Use selected mentors if any are selected, otherwise use all filtered mentors
+      const mentorsToExport = selected.size > 0 
+        ? Array.from(selected)
+        : filteredAndSortedData.map(mentor => mentor.mentorName)
+      
+      await onExportToMentorCommission({
+        mentors: mentorsToExport,
+        months: filterMonths
+      })
+      
+      // Clear selection after export
+      if (selected.size > 0) {
+        setSelected(new Set())
+      }
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const handleExportIndividualMentor = async (mentorName: string) => {
+    if (!onExportToMentorCommission) return
+    try {
+      setExporting(true)
+      // Export only this specific mentor's payments
+      await onExportToMentorCommission({
+        mentors: [mentorName],
+        months: []
+      })
     } finally {
       setExporting(false)
     }
@@ -130,12 +169,18 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
 
   // Helper function to get display values based on month filter
   const getDisplayValues = (mentor: MentorCommissionData) => {
-    if (filterMonth) {
-      const monthData = mentor.monthlyBreakdown.find(m => m.month === filterMonth)
-      return {
-        payout: monthData?.payout || 0,
-        sessions: monthData?.sessions || 0
-      }
+    if (filterMonths.length > 0) {
+      const aggregate = mentor.monthlyBreakdown.reduce(
+        (acc, m) => {
+          if (filterMonths.includes(m.month)) {
+            acc.payout += m.payout
+            acc.sessions += m.sessions
+          }
+          return acc
+        },
+        { payout: 0, sessions: 0 }
+      )
+      return aggregate
     }
     return {
       payout: mentor.totalPayout,
@@ -146,19 +191,12 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
   // Calculate totals based on filtered data and month filter
   const { totalCommission, totalSessions } = useMemo(() => {
     return filteredAndSortedData.reduce((acc, mentor) => {
-      if (filterMonth) {
-        const monthData = mentor.monthlyBreakdown.find(m => m.month === filterMonth)
-        if (monthData) {
-          acc.totalCommission += monthData.payout
-          acc.totalSessions += monthData.sessions
-        }
-      } else {
-        acc.totalCommission += mentor.totalPayout
-        acc.totalSessions += mentor.sessions
-      }
+      const values = getDisplayValues(mentor)
+      acc.totalCommission += values.payout
+      acc.totalSessions += values.sessions
       return acc
     }, { totalCommission: 0, totalSessions: 0 })
-  }, [filteredAndSortedData, filterMonth])
+  }, [filteredAndSortedData, filterMonths])
 
   if (loading) {
     return (
@@ -192,7 +230,7 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(totalCommission)}</div>
             <p className="text-xs text-muted-foreground">
-              Across {filteredAndSortedData.length} mentors{filterMonth ? ` (${filterMonth})` : ''}
+              Across {filteredAndSortedData.length} mentors{filterMonths.length > 0 ? ` (${filterMonths.join(', ')})` : ''}
             </p>
           </CardContent>
         </Card>
@@ -220,7 +258,7 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
               {formatCurrency(filteredAndSortedData.length > 0 ? totalCommission / filteredAndSortedData.length : 0)}
             </div>
             <p className="text-xs text-muted-foreground">
-              Commission per mentor{filterMonth ? ` (${filterMonth})` : ''}
+              Commission per mentor{filterMonths.length > 0 ? ` (${filterMonths.join(', ')})` : ''}
             </p>
           </CardContent>
         </Card>
@@ -270,17 +308,17 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
 
           {/* Month Filter */}
           <div className="relative">
-            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-            <select
-              value={filterMonth}
-              onChange={(e) => setFilterMonth(e.target.value)}
-              className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="">All Months</option>
-              {getUniqueMonths.map(month => (
-                <option key={month} value={month}>{month}</option>
-              ))}
-            </select>
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 z-10" />
+            <MultiSelect
+              options={getUniqueMonths.map((month: string) => ({
+                label: month,
+                value: month
+              }))}
+              value={filterMonths}
+              onChange={setFilterMonths}
+              placeholder="All Months"
+              className="pl-10"
+            />
           </div>
         </div>
 
@@ -297,7 +335,12 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
               className="bg-blue-600 text-white border-blue-600 hover:bg-blue-700"
             >
               <Send className={`w-4 h-4 mr-2 ${exporting ? 'animate-spin' : ''}`} />
-              {exporting ? 'Exporting...' : 'Export to Mentor Commission'}
+              {exporting 
+                ? 'Exporting...' 
+                : selected.size > 0 
+                  ? `Export Selected (${selected.size})` 
+                  : 'Export to Mentor Commission'
+              }
             </Button>
             {onMarkMentorPaid && (
               <Button
@@ -399,7 +442,7 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
                         size="sm"
                         variant="outline"
                         disabled={exporting || !onExportToMentorCommission}
-                        onClick={handleExportToMentorCommission}
+                        onClick={() => handleExportIndividualMentor(mentor.mentorName)}
                         className="bg-blue-600 text-white border-blue-600 hover:bg-blue-700"
                       >
                         <Send className="w-4 h-4 mr-2" />
@@ -453,13 +496,13 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <p className="text-sm text-gray-500">{filterMonth ? `Commission (${filterMonth})` : 'Total Commission'}</p>
+                      <p className="text-sm text-gray-500">{filterMonths.length > 0 ? `Commission (${filterMonths.join(', ')})` : 'Total Commission'}</p>
                       <p className="text-lg font-bold text-gray-900">
                         {formatCurrency(displayValues.payout)}
                       </p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-500">{filterMonth ? `Sessions (${filterMonth})` : 'Sessions'}</p>
+                      <p className="text-sm text-gray-500">{filterMonths.length > 0 ? `Sessions (${filterMonths.join(', ')})` : 'Sessions'}</p>
                       <p className="text-lg font-bold text-gray-900">{displayValues.sessions}</p>
                     </div>
                   </div>
@@ -476,7 +519,7 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid,
                     <Button
                       size="sm"
                       disabled={exporting}
-                      onClick={handleExportToMentorCommission}
+                      onClick={() => handleExportIndividualMentor(mentor.mentorName)}
                       className="w-full bg-blue-600 text-white hover:bg-blue-700"
                     >
                       <Send className="w-4 h-4 mr-2" />

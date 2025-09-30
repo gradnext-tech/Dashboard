@@ -1,46 +1,55 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { PaymentRecord } from '@/lib/google-sheets'
-import { Check, Calendar, DollarSign, User, Mail, Search, Filter, Building2 } from 'lucide-react'
+import { Check, Calendar, DollarSign, User, Mail, Search, Filter, Building2, Send } from 'lucide-react'
 import { format } from 'date-fns'
+import { MultiSelect, MultiSelectOption } from '@/components/ui/multi-select'
 
 interface PaymentTableProps {
   payments: PaymentRecord[]
   onMarkAsPaid?: (paymentIds: string[]) => Promise<void>
+  onExportIndividual?: (payment: PaymentRecord) => Promise<void>
   loading?: boolean
   actionButtonText?: string
   showMarkAsPaidActions?: boolean
   showSelection?: boolean
+  onFilteredPaymentsChange?: (filteredPayments: PaymentRecord[]) => void
 }
 
-export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionButtonText = "Mark as Paid", showMarkAsPaidActions = true, showSelection = true }: PaymentTableProps) {
+export function PaymentTable({ payments, onMarkAsPaid, onExportIndividual, loading = false, actionButtonText = "Mark as Paid", showMarkAsPaidActions = true, showSelection = true, onFilteredPaymentsChange }: PaymentTableProps) {
   const [selectedPayments, setSelectedPayments] = useState<Set<string>>(new Set())
   const [processing, setProcessing] = useState(false)
+  const [exporting, setExporting] = useState<Set<string>>(new Set())
   const [searchTerm, setSearchTerm] = useState('')
-  const [filterMentor, setFilterMentor] = useState('')
+  const [filterMentors, setFilterMentors] = useState<string[]>([])
   const [filterStatus, setFilterStatus] = useState('')
   const [filterType, setFilterType] = useState('')
-  const [filterMonth, setFilterMonth] = useState('')
+  const [filterMonths, setFilterMonths] = useState<string[]>([])
 
   // Get unique months from payments for filter dropdown
   const getUniqueMonths = () => {
-    const months = new Set<string>()
+    const monthsWithDates = new Map<string, Date>()
     payments.forEach(payment => {
       if (payment.sessionDate) {
         try {
           const date = new Date(payment.sessionDate)
           if (!isNaN(date.getTime())) {
             const monthKey = date.toLocaleDateString('en-IN', { year: 'numeric', month: 'long' })
-            months.add(monthKey)
+            if (!monthsWithDates.has(monthKey)) {
+              monthsWithDates.set(monthKey, new Date(date.getFullYear(), date.getMonth(), 1))
+            }
           }
         } catch (e) {
           // Skip invalid dates
         }
       }
     })
-    return Array.from(months).sort()
+    // Sort by actual date instead of string
+    return Array.from(monthsWithDates.entries())
+      .sort(([, dateA], [, dateB]) => dateA.getTime() - dateB.getTime())
+      .map(([monthKey]) => monthKey)
   }
 
   // Filter payments based on search and filter criteria
@@ -53,8 +62,8 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionBu
       payment.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (payment.sheetName && payment.sheetName.toLowerCase().includes(searchTerm.toLowerCase()))
     
-    const matchesMentor = !filterMentor || 
-      payment.mentorName.toLowerCase().includes(filterMentor.toLowerCase())
+    const matchesMentor = filterMentors.length === 0 ||
+      filterMentors.includes(payment.mentorName)
     
     const matchesStatus = !filterStatus || 
       payment.paymentStatus.toLowerCase() === filterStatus.toLowerCase()
@@ -63,13 +72,13 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionBu
       (filterType === 'corporate' && isCorporate) ||
       (filterType === 'regular' && !isCorporate)
     
-    const matchesMonth = !filterMonth || (() => {
+    const matchesMonth = filterMonths.length === 0 || (() => {
       if (!payment.sessionDate) return false
       try {
         const date = new Date(payment.sessionDate)
         if (isNaN(date.getTime())) return false
         const monthKey = date.toLocaleDateString('en-IN', { year: 'numeric', month: 'long' })
-        return monthKey === filterMonth
+        return filterMonths.includes(monthKey)
       } catch (e) {
         return false
       }
@@ -77,6 +86,13 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionBu
     
     return matchesSearch && matchesMentor && matchesStatus && matchesType && matchesMonth
   })
+
+  // Notify parent component when filtered payments change
+  useEffect(() => {
+    if (onFilteredPaymentsChange) {
+      onFilteredPaymentsChange(filteredPayments)
+    }
+  }, [filteredPayments, onFilteredPaymentsChange])
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -126,6 +142,23 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionBu
       console.error('Error marking payment as paid:', error)
     } finally {
       setProcessing(false)
+    }
+  }
+
+  const handleExportIndividual = async (payment: PaymentRecord) => {
+    if (!onExportIndividual) return
+    
+    setExporting(prev => new Set(prev).add(payment.id))
+    try {
+      await onExportIndividual(payment)
+    } catch (error) {
+      console.error('Error exporting payment:', error)
+    } finally {
+      setExporting(prev => {
+        const next = new Set(prev)
+        next.delete(payment.id)
+        return next
+      })
     }
   }
 
@@ -184,17 +217,17 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionBu
           
           {/* Mentor Filter */}
           <div className="relative">
-            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-            <select
-              value={filterMentor}
-              onChange={(e) => setFilterMentor(e.target.value)}
-              className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="">All Mentors</option>
-              {Array.from(new Set(payments.map(p => p.mentorName))).map(mentor => (
-                <option key={mentor} value={mentor}>{mentor}</option>
-              ))}
-            </select>
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 z-10" />
+            <MultiSelect
+              options={Array.from(new Set(payments.map(p => p.mentorName))).map(mentor => ({
+                label: mentor,
+                value: mentor
+              }))}
+              value={filterMentors}
+              onChange={setFilterMentors}
+              placeholder="All Mentors"
+              className="pl-10"
+            />
           </div>
           
           {/* Type Filter */}
@@ -227,27 +260,27 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionBu
 
           {/* Month Filter */}
           <div className="relative">
-            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-            <select
-              value={filterMonth}
-              onChange={(e) => setFilterMonth(e.target.value)}
-              className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="">All Months</option>
-              {getUniqueMonths().map(month => (
-                <option key={month} value={month}>{month}</option>
-              ))}
-            </select>
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 z-10" />
+            <MultiSelect
+              options={getUniqueMonths().map(month => ({
+                label: month,
+                value: month
+              }))}
+              value={filterMonths}
+              onChange={setFilterMonths}
+              placeholder="All Months"
+              className="pl-10"
+            />
           </div>
           
           {/* Clear Filters */}
           <Button
             onClick={() => {
               setSearchTerm('')
-              setFilterMentor('')
+              setFilterMentors([])
               setFilterStatus('')
               setFilterType('')
-              setFilterMonth('')
+              setFilterMonths([])
             }}
             variant="outline"
             className="w-full"
@@ -290,7 +323,7 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionBu
 
       {/* Desktop Table */}
       <div className="hidden md:block">
-        <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
+        <div className="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
           <table className="min-w-full divide-y divide-gray-300">
             <thead className="bg-gray-50">
               <tr>
@@ -304,32 +337,32 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionBu
                     />
                   </th>
                 )}
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   S No
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Mentor
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Mentee
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Session Date
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Rate
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Sessions
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Total Payout
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Status
                 </th>
                 {showMarkAsPaidActions && (
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
                 )}
@@ -350,10 +383,10 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionBu
                         />
                       </td>
                     )}
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
                       {payment.sNo}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-4 whitespace-nowrap">
                       <div className="flex items-center">
                         <div className="text-sm font-medium text-gray-900">
                           {payment.mentorName}
@@ -363,7 +396,7 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionBu
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">
                         {isCorporate && payment.sheetName ? (
                           <div>
@@ -375,23 +408,23 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionBu
                         )}
                       </div>
                     </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
                     {formatDate(payment.sessionDate)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-3 py-4 whitespace-nowrap">
                     <div className="text-sm font-medium text-gray-900">
                       {formatCurrency(payment.rate)}
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
                     {payment.noOfSessions}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-4 py-4 whitespace-nowrap">
                     <div className="text-sm font-medium text-gray-900">
                       {formatCurrency(payment.totalPayout)}
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-3 py-4 whitespace-nowrap">
                     <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-800">
                       {payment.paymentStatus ? 
                         payment.paymentStatus.charAt(0).toUpperCase() + payment.paymentStatus.slice(1).toLowerCase() 
@@ -400,17 +433,33 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionBu
                     </span>
                   </td>
                   {showMarkAsPaidActions && (
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={processing || !onMarkAsPaid}
-                        onClick={() => handleMarkIndividualAsPaid(payment.id)}
-                        className="bg-green-600 text-white border-green-600 hover:bg-green-700"
-                      >
-                        <Check className="w-4 h-4 mr-2" />
-                        {actionButtonText}
-                      </Button>
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <div className="flex space-x-2">
+                        {onMarkAsPaid && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={processing || exporting.has(payment.id)}
+                            onClick={() => handleMarkIndividualAsPaid(payment.id)}
+                            className="bg-green-600 text-white border-green-600 hover:bg-green-700"
+                          >
+                            <Check className="w-4 h-4 mr-2" />
+                            {actionButtonText}
+                          </Button>
+                        )}
+                        {onExportIndividual && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={processing || exporting.has(payment.id)}
+                            onClick={() => handleExportIndividual(payment)}
+                            className="bg-blue-600 text-white border-blue-600 hover:bg-blue-700"
+                          >
+                            <Send className={`w-4 h-4 mr-2 ${exporting.has(payment.id) ? 'animate-spin' : ''}`} />
+                            Export
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -513,18 +562,31 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false, actionBu
               </div>
             </div>
             
-            {/* Individual Action Button */}
-            {showMarkAsPaidActions && onMarkAsPaid && (
-              <div className="pt-3 border-t border-gray-200">
-                <Button
-                  size="sm"
-                  disabled={processing}
-                  onClick={() => handleMarkIndividualAsPaid(payment.id)}
-                  className="w-full bg-green-600 text-white hover:bg-green-700"
-                >
-                  <Check className="w-4 h-4 mr-2" />
-                  {actionButtonText}
-                </Button>
+            {/* Individual Action Buttons */}
+            {showMarkAsPaidActions && (onMarkAsPaid || onExportIndividual) && (
+              <div className="pt-3 border-t border-gray-200 space-y-2">
+                {onMarkAsPaid && (
+                  <Button
+                    size="sm"
+                    disabled={processing || exporting.has(payment.id)}
+                    onClick={() => handleMarkIndividualAsPaid(payment.id)}
+                    className="w-full bg-green-600 text-white hover:bg-green-700"
+                  >
+                    <Check className="w-4 h-4 mr-2" />
+                    {actionButtonText}
+                  </Button>
+                )}
+                {onExportIndividual && (
+                  <Button
+                    size="sm"
+                    disabled={processing || exporting.has(payment.id)}
+                    onClick={() => handleExportIndividual(payment)}
+                    className="w-full bg-blue-600 text-white hover:bg-blue-700"
+                  >
+                    <Send className={`w-4 h-4 mr-2 ${exporting.has(payment.id) ? 'animate-spin' : ''}`} />
+                    Export to Mentor Commission
+                  </Button>
+                )}
               </div>
             )}
           </div>

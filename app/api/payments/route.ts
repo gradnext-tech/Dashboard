@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { googleSheetsService } from '@/lib/google-sheets'
+import nodemailer from 'nodemailer'
 
 export async function GET(request: NextRequest) {
   try {
@@ -67,8 +68,15 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'exportToMentorCommission') {
-      // Get all due payments
-      const duePayments = await googleSheetsService.getDuePayments()
+      // Use filtered payments if provided, otherwise get all due payments
+      const { filteredPayments } = body
+      let duePayments
+      
+      if (filteredPayments && filteredPayments.length > 0) {
+        duePayments = filteredPayments
+      } else {
+        duePayments = await googleSheetsService.getDuePayments()
+      }
       
       if (duePayments.length === 0) {
         return NextResponse.json(
@@ -83,6 +91,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ 
         success: true, 
         message: `Successfully exported ${duePayments.length} payments to Mentor Commission sheet` 
+      })
+    }
+
+    if (action === 'exportIndividualToMentorCommission') {
+      const { payment } = body
+      
+      if (!payment) {
+        return NextResponse.json(
+          { error: 'Payment is required' },
+          { status: 400 }
+        )
+      }
+
+      // Export single payment to Mentor Commission sheet
+      await googleSheetsService.exportToMentorCommission([payment])
+
+      return NextResponse.json({ 
+        success: true, 
+        message: `Successfully exported 1 payment to Mentor Commission sheet` 
       })
     }
 
@@ -140,8 +167,17 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'emailMentorPayouts') {
-      // Aggregate due payouts per mentor (including corporate sessions)
-      const duePayouts = await googleSheetsService.getDuePayoutsByMentorIncludingCorporate()
+      // Use filtered payments if provided, otherwise get all due payouts
+      const { filteredPayments } = body
+      let duePayouts
+      
+      if (filteredPayments && filteredPayments.length > 0) {
+        // Aggregate filtered payments by mentor
+        duePayouts = await googleSheetsService.aggregatePaymentsByMentor(filteredPayments)
+      } else {
+        // Aggregate due payouts per mentor (including corporate sessions)
+        duePayouts = await googleSheetsService.getDuePayoutsByMentorIncludingCorporate()
+      }
       
       // Get mentor details from RATE_LIST_SHEET for emails
       const mentorDetails = await googleSheetsService.getMentorDetails()
@@ -161,7 +197,6 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, error: 'SMTP is not configured' }, { status: 500 })
       }
 
-      const nodemailer = await import('nodemailer')
       const transporter = nodemailer.createTransport({
         host,
         port,
@@ -195,15 +230,50 @@ export async function POST(request: NextRequest) {
         }
 
         const amountInr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(entry.totalPayout)
-        const subject = `Your pending payout summary`
+        
+        // Extract unique months from the sessions
+        const monthsWithDates = new Map<string, Date>()
+        ;(entry.sessionsBreakdown || []).forEach((s: any) => {
+          if (s.date) {
+            try {
+              const date = new Date(s.date)
+              if (!isNaN(date.getTime())) {
+                const monthKey = date.toLocaleDateString('en-IN', { year: 'numeric', month: 'long' })
+                if (!monthsWithDates.has(monthKey)) {
+                  monthsWithDates.set(monthKey, new Date(date.getFullYear(), date.getMonth(), 1))
+                }
+              }
+            } catch (e) {
+              // Skip invalid dates
+            }
+          }
+        })
+        
+        // Sort months chronologically instead of alphabetically
+        const monthsArray = Array.from(monthsWithDates.entries())
+          .sort(([, dateA], [, dateB]) => dateA.getTime() - dateB.getTime())
+          .map(([monthKey]) => monthKey)
+        const monthText = monthsArray.length > 0 
+          ? ` for the month${monthsArray.length > 1 ? 's' : ''} of ${monthsArray.join(' and ')}`
+          : ''
+        
+        const monthTextBold = monthsArray.length > 0 
+          ? ` for the month${monthsArray.length > 1 ? 's' : ''}:\n${monthsArray.map(month => `• **${month}**`).join('\n')}`
+          : ''
+        
+        const monthTextHtml = monthsArray.length > 0 
+          ? ` for the month${monthsArray.length > 1 ? 's' : ''}:<ul>${monthsArray.map(month => `<li><strong>${month}</strong></li>`).join('')}</ul>`
+          : ''
+        
+        const subject = `Your pending payout summary${monthText}`
         
         // Create session-wise breakdown text
-        const sessionBreakdownText = (entry.sessionsBreakdown || []).map(s =>
+        const sessionBreakdownText = (entry.sessionsBreakdown || []).map((s: any) =>
           `  ${s.date} - ${s.menteeName}: ${s.sessions} session(s) - ${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(s.payout)}`
         ).join('\n')
         
         const text = `Hi ${entry.mentorName},\n\n` +
-          `This is a summary of your pending payout with gradnext.\n\n` +
+          `This is a summary of your pending payout with gradnext${monthTextBold}\n\n` +
           `Total Sessions: ${entry.sessions}\n` +
           `Total Payout: ${amountInr}\n\n` +
           `Session-wise Breakdown:\n${sessionBreakdownText}\n\n` +
@@ -212,21 +282,21 @@ export async function POST(request: NextRequest) {
           `Best,\nGradNext`
         
         // Create session-wise breakdown HTML
-        const sessionBreakdownHtml = (entry.sessionsBreakdown || []).map(s => 
+        const sessionBreakdownHtml = (entry.sessionsBreakdown || []).map((s: any) => 
           `<tr><td>${s.date}</td><td>${s.menteeName}</td><td>${s.sessions}</td><td>${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(s.payout)}</td></tr>`
         ).join('')
         
         const html = `<p>Hi ${entry.mentorName},</p>` +
-          `<p>This is a summary of your pending payout with gradnext</p>` +
+          `<p>This is a summary of your pending payout with gradnext${monthTextHtml}</p>` +
+           `<p><strong>Total Sessions:</strong> ${entry.sessions}</p>` +
+          `<p><strong>Total Payout:</strong> ${amountInr}</p>`+ 
           `<h3>Session-wise Breakdown:</h3>` +
           `<table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; margin: 10px 0;">` +
           `<thead><tr style="background-color: #f5f5f5;"><th>Date</th><th>Mentee</th><th>Sessions</th><th>Payout</th></tr></thead>` +
           `<tbody>${sessionBreakdownHtml}</tbody>` +
           `</table>` +
-          `<p><strong>Total Sessions:</strong> ${entry.sessions}</p>` +
-          `<p><strong>Total Payout:</strong> ${amountInr}</p>` +
-          `<p>We will process the payout after confirmation.</p>` +
-          `<p>If you have any discrepancies, please contact us at <a href="mailto:finance@gradnext.co">finance@gradnext.co</a> or contact +91 8320447769</p>` +
+          `<p>We will process the payout soon</p>` +
+          `<p>If you have any discrepancies, please contact us at contact +91 8320447769</p>` +
           `<p>Best,<br/>gradnext</p>`
 
         try {
@@ -254,6 +324,25 @@ export async function POST(request: NextRequest) {
           failed: emailsFailed
         },
         message: `Email summary: ${emailsSent} sent, ${emailsSkipped} skipped (no email), ${emailsFailed} failed`
+      })
+    }
+
+    if (action === 'markFinalPaymentsPaid') {
+      const { paymentIds } = body
+      
+      if (!paymentIds || !Array.isArray(paymentIds) || paymentIds.length === 0) {
+        return NextResponse.json(
+          { error: 'paymentIds array is required' },
+          { status: 400 }
+        )
+      }
+
+      // Mark final payments as paid in the Mentor Commission sheet
+      await googleSheetsService.markFinalPaymentsAsPaid(paymentIds)
+
+      return NextResponse.json({ 
+        success: true, 
+        message: `Successfully marked ${paymentIds.length} final payments as paid` 
       })
     }
 

@@ -40,6 +40,15 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [activeTab, setActiveTab] = useState<'payments' | 'commissions' | 'final-payments'>('payments')
+  const [filteredPayments, setFilteredPayments] = useState<PaymentRecord[]>([])
+  const [filteredMentorCommissions, setFilteredMentorCommissions] = useState<Array<{
+    mentorName: string
+    mentorEmail: string
+    totalPayout: number
+    sessions: number
+    monthlyBreakdown: Array<{ month: string; payout: number; sessions: number }>
+  }>>([])
+  const [filteredMonths, setFilteredMonths] = useState<string[]>([])
 
   useEffect(() => {
     if (authLoading) return
@@ -147,9 +156,35 @@ export default function Dashboard() {
     }
   }
 
-  const handleExportToMentorCommission = async () => {
+  const handleExportToMentorCommission = async (filteredData?: { mentors: string[], months: string[] }) => {
     try {
       setExporting(true)
+      
+      // If filtered data is provided from MentorCommissionTable, apply those filters to payments
+      let paymentsToExport = payments
+      if (filteredData) {
+        paymentsToExport = payments.filter(payment => {
+          const matchesMentor = filteredData.mentors.length === 0 || filteredData.mentors.includes(payment.mentorName)
+          
+          const matchesMonth = filteredData.months.length === 0 || (() => {
+            if (!payment.sessionDate) return false
+            try {
+              const date = new Date(payment.sessionDate)
+              if (isNaN(date.getTime())) return false
+              const monthKey = date.toLocaleDateString('en-IN', { year: 'numeric', month: 'long' })
+              return filteredData.months.includes(monthKey)
+            } catch (e) {
+              return false
+            }
+          })()
+          
+          return matchesMentor && matchesMonth
+        })
+      } else {
+        // Fallback to filtered payments from PaymentTable if no specific filter data provided
+        paymentsToExport = filteredPayments.length > 0 ? filteredPayments : payments
+      }
+      
       const response = await fetch('/api/payments', {
         method: 'POST',
         headers: {
@@ -157,6 +192,7 @@ export default function Dashboard() {
         },
         body: JSON.stringify({
           action: 'exportToMentorCommission',
+          filteredPayments: paymentsToExport
         }),
       })
 
@@ -172,6 +208,37 @@ export default function Dashboard() {
       alert(error instanceof Error ? error.message : 'Failed to export payments')
     } finally {
       setExporting(false)
+    }
+  }
+
+  const handleExportIndividualPayment = async (payment: PaymentRecord) => {
+    try {
+      const response = await fetch('/api/payments', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'exportIndividualToMentorCommission',
+          payment: payment
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to export payment')
+      }
+
+      const data = await response.json()
+      alert(data.message || 'Successfully exported payment to Mentor Commission sheet')
+      
+      // Refresh data after export
+      await fetchPayments()
+      await fetchMentorCommissions()
+    } catch (error) {
+      console.error('Error exporting individual payment:', error)
+      alert(error instanceof Error ? error.message : 'Failed to export payment')
+      throw error // Re-throw to let the component handle the error display
     }
   }
 
@@ -219,7 +286,10 @@ export default function Dashboard() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ action: 'emailMentorPayouts' }),
+        body: JSON.stringify({ 
+          action: 'emailMentorPayouts',
+          filteredPayments: filteredPayments.length > 0 ? filteredPayments : payments
+        }),
       })
 
       const data = await response.json()
@@ -461,6 +531,7 @@ export default function Dashboard() {
                   loading={refreshing}
                   showMarkAsPaidActions={false}
                   showSelection={false}
+                  onFilteredPaymentsChange={setFilteredPayments}
                 />
               </CardContent>
             </Card>
@@ -545,6 +616,8 @@ export default function Dashboard() {
                 onMarkAsPaid={handleMarkFinalPaymentsPaid}
                 loading={refreshing}
                 actionButtonText="Mark as Paid"
+                showMarkAsPaidActions={true}
+                showSelection={true}
               />
             </CardContent>
           </Card>
