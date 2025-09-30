@@ -23,15 +23,35 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid 
   const [searchTerm, setSearchTerm] = useState('')
   const [sortBy, setSortBy] = useState<'name' | 'payout' | 'sessions'>('payout')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+  const [filterMonth, setFilterMonth] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [processing, setProcessing] = useState(false)
 
+  // Get unique months from mentor commission data for filter dropdown
+  const getUniqueMonths = useMemo(() => {
+    const months = new Set<string>()
+    data.forEach(mentor => {
+      mentor.monthlyBreakdown.forEach(monthData => {
+        if (monthData.month && monthData.month !== 'Unknown Month') {
+          months.add(monthData.month)
+        }
+      })
+    })
+    return Array.from(months).sort()
+  }, [data])
+
   // Filter and sort data
   const filteredAndSortedData = useMemo(() => data
-    .filter(mentor => 
-      mentor.mentorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      mentor.mentorEmail.toLowerCase().includes(searchTerm.toLowerCase())
-    )
+    .filter(mentor => {
+      const matchesSearch = mentor.mentorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        mentor.mentorEmail.toLowerCase().includes(searchTerm.toLowerCase())
+      
+      const matchesMonth = !filterMonth || mentor.monthlyBreakdown.some(monthData => 
+        monthData.month === filterMonth
+      )
+      
+      return matchesSearch && matchesMonth
+    })
     .sort((a, b) => {
       let comparison = 0
       switch (sortBy) {
@@ -46,7 +66,7 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid 
           break
       }
       return sortOrder === 'asc' ? comparison : -comparison
-    }), [data, searchTerm, sortBy, sortOrder])
+    }), [data, searchTerm, filterMonth, sortBy, sortOrder])
 
   const toggleAll = (checked: boolean) => {
     if (checked) {
@@ -167,7 +187,7 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid 
 
       {/* Search and Sort Controls */}
       <div className="bg-gray-50 p-4 rounded-lg">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
           {/* Search Input */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
@@ -206,6 +226,37 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid 
               <option value="asc">Low to High</option>
             </select>
           </div>
+
+          {/* Month Filter */}
+          <div className="relative">
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+            <select
+              value={filterMonth}
+              onChange={(e) => setFilterMonth(e.target.value)}
+              className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">All Months</option>
+              {getUniqueMonths.map(month => (
+                <option key={month} value={month}>{month}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Actions Row */}
+        <div className="flex items-center justify-between">
+          <div className="text-sm text-gray-600">
+            {selected.size} mentor{selected.size === 1 ? '' : 's'} selected
+          </div>
+          <Button
+            onClick={handleBulkMarkPaid}
+            disabled={processing || selected.size === 0 || !onMarkMentorPaid}
+            variant="outline"
+            className="bg-green-600 text-white border-green-600 hover:bg-green-700"
+          >
+            <Check className={`w-4 h-4 mr-2 ${processing ? 'animate-spin' : ''}`} />
+            {processing ? 'Marking...' : 'Mark Selected as Paid'}
+          </Button>
         </div>
       </div>
 
@@ -302,21 +353,6 @@ export function MentorCommissionTable({ data, loading = false, onMarkMentorPaid 
               ))}
             </tbody>
           </table>
-        </div>
-
-        <div className="flex items-center justify-between mt-3">
-          <div className="text-sm text-gray-600">
-            {selected.size} mentor{selected.size === 1 ? '' : 's'} selected
-          </div>
-          <Button
-            onClick={handleBulkMarkPaid}
-            disabled={processing || selected.size === 0 || !onMarkMentorPaid}
-            variant="outline"
-            className="bg-green-600 text-white border-green-600 hover:bg-green-700"
-          >
-            <Check className={`w-4 h-4 mr-2 ${processing ? 'animate-spin' : ''}`} />
-            {processing ? 'Marking...' : 'Mark Selected as Paid'}
-          </Button>
         </div>
       </div>
 

@@ -19,6 +19,26 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
   const [filterMentor, setFilterMentor] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [filterType, setFilterType] = useState('')
+  const [filterMonth, setFilterMonth] = useState('')
+
+  // Get unique months from payments for filter dropdown
+  const getUniqueMonths = () => {
+    const months = new Set<string>()
+    payments.forEach(payment => {
+      if (payment.sessionDate) {
+        try {
+          const date = new Date(payment.sessionDate)
+          if (!isNaN(date.getTime())) {
+            const monthKey = date.toLocaleDateString('en-IN', { year: 'numeric', month: 'long' })
+            months.add(monthKey)
+          }
+        } catch (e) {
+          // Skip invalid dates
+        }
+      }
+    })
+    return Array.from(months).sort()
+  }
 
   // Filter payments based on search and filter criteria
   const filteredPayments = payments.filter(payment => {
@@ -40,7 +60,19 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
       (filterType === 'corporate' && isCorporate) ||
       (filterType === 'regular' && !isCorporate)
     
-    return matchesSearch && matchesMentor && matchesStatus && matchesType
+    const matchesMonth = !filterMonth || (() => {
+      if (!payment.sessionDate) return false
+      try {
+        const date = new Date(payment.sessionDate)
+        if (isNaN(date.getTime())) return false
+        const monthKey = date.toLocaleDateString('en-IN', { year: 'numeric', month: 'long' })
+        return monthKey === filterMonth
+      } catch (e) {
+        return false
+      }
+    })()
+    
+    return matchesSearch && matchesMentor && matchesStatus && matchesType && matchesMonth
   })
 
   const handleSelectAll = (checked: boolean) => {
@@ -115,7 +147,7 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
     <div className="space-y-4">
       {/* Search and Filter Bar */}
       <div className="bg-gray-50 p-4 rounded-lg">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
           {/* Search Input */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
@@ -170,6 +202,21 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
               <option value="paid">Paid</option>
             </select>
           </div>
+
+          {/* Month Filter */}
+          <div className="relative">
+            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+            <select
+              value={filterMonth}
+              onChange={(e) => setFilterMonth(e.target.value)}
+              className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">All Months</option>
+              {getUniqueMonths().map(month => (
+                <option key={month} value={month}>{month}</option>
+              ))}
+            </select>
+          </div>
           
           {/* Clear Filters */}
           <Button
@@ -178,6 +225,7 @@ export function PaymentTable({ payments, onMarkAsPaid, loading = false }: Paymen
               setFilterMentor('')
               setFilterStatus('')
               setFilterType('')
+              setFilterMonth('')
             }}
             variant="outline"
             className="w-full"
