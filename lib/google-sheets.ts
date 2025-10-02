@@ -167,6 +167,21 @@ class GoogleSheetsService {
     }))
   }
 
+  async getPendingPayments(): Promise<PaymentRecord[]> {
+    const allPayments = await this.getPaymentData()
+    
+    // Filter payments where Payment column equals "Pending"
+    const pendingPayments = allPayments.filter(payment => 
+      payment.paymentStatus.toLowerCase().trim() === 'pending'
+    )
+    
+    // Update S No to be sequential for filtered results
+    return pendingPayments.map((payment, index) => ({
+      ...payment,
+      sNo: (index + 1).toString()
+    }))
+  }
+
   async markAsPaid(paymentId: string): Promise<boolean> {
     try {
       const spreadsheetId = process.env.GOOGLE_SHEET_ID
@@ -320,7 +335,7 @@ class GoogleSheetsService {
           payment.mentorName,    // Mentor Name
           payment.menteeName,    // Mentee Name
           payment.sessionDate,   // Session Date
-          payment.sessionStatus === 'Done' ? 'Completed' : payment.sessionStatus, // Session Status (Done -> Completed)
+          'Completed',           // Session Status (always "Completed" for exported sessions)
           mentorRate,            // Rate from rates sheet
           'Due',                 // Payment Status (always "Due" in Mentor Commission)
           payment.noOfSessions,  // No. of Sessions
@@ -458,7 +473,7 @@ class GoogleSheetsService {
         entry.mentorName,     // Mentor Name
         entry.menteeName,     // Mentee Name
         entry.sessionDate,    // Session Date
-        entry.sessionStatus,  // Session Status
+        'Completed',          // Session Status (always "Completed" for mentor commission entries)
         finalRate,            // Rate
         entry.paymentStatus,  // Payment Status
         entry.noOfSessions,   // No. of Sessions
@@ -1256,6 +1271,63 @@ class GoogleSheetsService {
       return true
     } catch (error) {
       console.error('Error marking final payments as paid:', error)
+      throw error
+    }
+  }
+
+  async markFinalPaymentsByMentorAsPaid(mentorName: string): Promise<boolean> {
+    try {
+      const mentorCommissionSheetId = process.env.MENTOR_COMMISSION_SHEET_ID
+      if (!mentorCommissionSheetId) {
+        throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
+      }
+
+      // Get current data from Mentor commission sheet
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: mentorCommissionSheetId,
+        range: 'Mentor commission!A:K',
+      })
+
+      const rows = response.data.values
+      if (!rows || rows.length <= 1) {
+        return false
+      }
+
+      const normalizedMentorName = mentorName.trim().toLowerCase()
+      const updates: any[] = []
+      
+      // Find all rows for this mentor with "Due" status and mark them as "Paid"
+      for (let i = 1; i < rows.length; i++) { // Skip header row
+        const row = rows[i]
+        if (!row || row.length < 7) continue
+        
+        const rowMentorName = (row[1] || '').toString().trim().toLowerCase() // Column B is Mentor Name
+        const paymentStatus = (row[6] || '').toString().trim().toLowerCase() // Column G is Payment Status
+        
+        if (rowMentorName === normalizedMentorName && paymentStatus === 'due') {
+          updates.push({
+            range: `Mentor commission!G${i + 1}`, // +1 because sheets are 1-indexed
+            values: [['Paid']]
+          })
+        }
+      }
+
+      if (updates.length === 0) {
+        return false
+      }
+
+      // Execute batch update
+      await this.sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: mentorCommissionSheetId,
+        resource: {
+          valueInputOption: 'RAW',
+          data: updates
+        }
+      })
+
+      return true
+    } catch (error) {
+      console.error('Error marking final payments by mentor as paid:', error)
       throw error
     }
   }

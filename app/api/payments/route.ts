@@ -28,6 +28,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ finalPayments })
     }
 
+    if (type === 'pending') {
+      const pendingPayments = await googleSheetsService.getPendingPayments()
+      return NextResponse.json({ payments: pendingPayments })
+    }
+
     let payments
     if (type === 'due') {
       payments = await googleSheetsService.getDuePayments()
@@ -168,7 +173,7 @@ export async function POST(request: NextRequest) {
 
     if (action === 'emailMentorPayouts') {
       // Use filtered payments if provided, otherwise get all due payouts
-      const { filteredPayments } = body
+      const { filteredPayments, pendingPayments } = body
       let duePayouts
       
       if (filteredPayments && filteredPayments.length > 0) {
@@ -272,11 +277,33 @@ export async function POST(request: NextRequest) {
           `  ${s.date} - ${s.menteeName}: ${s.sessions} session(s) - ${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(s.payout)}`
         ).join('\n')
         
+        // Check if this mentor has pending payments
+        const mentorPendingPayments = (pendingPayments || []).filter((p: any) => 
+          p.mentorName.toLowerCase().trim() === entry.mentorName.toLowerCase().trim()
+        )
+        
+        let pendingPaymentsText = ''
+        if (mentorPendingPayments.length > 0) {
+          const pendingBreakdownText = mentorPendingPayments.map((p: any) =>
+            `  ${p.sessionDate} - ${p.menteeName}: ${p.noOfSessions} session(s) - ${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(p.totalPayout)}`
+          ).join('\n')
+          
+          const totalPendingPayout = mentorPendingPayments.reduce((sum: number, p: any) => sum + p.totalPayout, 0)
+          const totalPendingSessions = mentorPendingPayments.reduce((sum: number, p: any) => sum + p.noOfSessions, 0)
+          
+          pendingPaymentsText = `\n\nPENDING PAYMENTS (Waiting for feedback completion):\n` +
+            `Total Pending Sessions: ${totalPendingSessions}\n` +
+            `Total Pending Payout: ${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(totalPendingPayout)}\n\n` +
+            `Pending Session-wise Breakdown:\n${pendingBreakdownText}\n\n` +
+            `Note: For these payouts the Payment is pending since feedback is not yet filled. Once it's done we will process these payouts.\n`
+        }
+        
         const text = `Hi ${entry.mentorName},\n\n` +
           `This is a summary of your pending payout with gradnext${monthTextBold}\n\n` +
           `Total Sessions: ${entry.sessions}\n` +
           `Total Payout: ${amountInr}\n\n` +
           `Session-wise Breakdown:\n${sessionBreakdownText}\n\n` +
+          pendingPaymentsText +
           `We will process the payout after confirmation.\n\n` +
           `If you have any discrepancies, contact +91 8320447769\n\n` +
           `Best,\nGradNext`
@@ -285,6 +312,26 @@ export async function POST(request: NextRequest) {
         const sessionBreakdownHtml = (entry.sessionsBreakdown || []).map((s: any) => 
           `<tr><td>${s.date}</td><td>${s.menteeName}</td><td>${s.sessions}</td><td>${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(s.payout)}</td></tr>`
         ).join('')
+        
+        // Create pending payments HTML section
+        let pendingPaymentsHtml = ''
+        if (mentorPendingPayments.length > 0) {
+          const pendingBreakdownHtml = mentorPendingPayments.map((p: any) => 
+            `<tr style="background-color: #fff3cd;"><td>${p.sessionDate}</td><td>${p.menteeName}</td><td>${p.noOfSessions}</td><td>${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(p.totalPayout)}</td></tr>`
+          ).join('')
+          
+          const totalPendingPayout = mentorPendingPayments.reduce((sum: number, p: any) => sum + p.totalPayout, 0)
+          const totalPendingSessions = mentorPendingPayments.reduce((sum: number, p: any) => sum + p.noOfSessions, 0)
+          
+          pendingPaymentsHtml = `<h3 style="color: #856404; background-color: #fff3cd; padding: 10px; border-left: 4px solid #ffc107;">Pending Payments (Waiting for feedback completion)</h3>` +
+            `<p><strong>Total Pending Sessions:</strong> ${totalPendingSessions}</p>` +
+            `<p><strong>Total Pending Payout:</strong> ${new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(totalPendingPayout)}</p>` +
+            `<table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; margin: 10px 0;">` +
+            `<thead><tr style="background-color: #f5f5f5;"><th>Date</th><th>Mentee</th><th>Sessions</th><th>Payout</th></tr></thead>` +
+            `<tbody>${pendingBreakdownHtml}</tbody>` +
+            `</table>` +
+            `<p style="background-color: #fff3cd; padding: 10px; border-left: 4px solid #ffc107; color: #856404;"><strong>Note:</strong> For these payouts the Payment is pending since feedback is not yet filled. Once it's done we will process these payouts.</p>`
+        }
         
         const html = `<p>Hi ${entry.mentorName},</p>` +
           `<p>This is a summary of your pending payout with gradnext${monthTextHtml}</p>` +
@@ -295,6 +342,7 @@ export async function POST(request: NextRequest) {
           `<thead><tr style="background-color: #f5f5f5;"><th>Date</th><th>Mentee</th><th>Sessions</th><th>Payout</th></tr></thead>` +
           `<tbody>${sessionBreakdownHtml}</tbody>` +
           `</table>` +
+          pendingPaymentsHtml +
           `<p>We will process the payout soon</p>` +
           `<p>If you have any discrepancies, please contact us at contact +91 8320447769</p>` +
           `<p>Best,<br/>gradnext</p>`
@@ -343,6 +391,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ 
         success: true, 
         message: `Successfully marked ${paymentIds.length} final payments as paid` 
+      })
+    }
+
+    if (action === 'markFinalPaymentsByMentorPaid') {
+      const { mentorName } = body
+      
+      if (!mentorName || typeof mentorName !== 'string') {
+        return NextResponse.json(
+          { error: 'mentorName is required' },
+          { status: 400 }
+        )
+      }
+
+      // Mark all final payments for this mentor as paid in the Mentor Commission sheet
+      await googleSheetsService.markFinalPaymentsByMentorAsPaid(mentorName)
+
+      return NextResponse.json({ 
+        success: true, 
+        message: `Successfully marked all final payments for ${mentorName} as paid` 
       })
     }
 

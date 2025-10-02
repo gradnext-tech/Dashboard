@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { PaymentTable } from '@/components/payment-table'
 import { MentorCommissionTable } from '@/components/mentor-commission-table'
 import { CorporateSessionsTable } from '@/components/corporate-sessions-table'
+import { CumulativeMentorPaymentsTable } from '@/components/cumulative-mentor-payments-table'
 import { PaymentRecord, CorporateSessionRecord } from '@/lib/google-sheets'
 import { RefreshCw, LogOut, DollarSign, Clock, CheckCircle, Send, Users, BarChart3, Building2, Mail } from 'lucide-react'
 
@@ -36,10 +37,11 @@ export default function Dashboard() {
     revenuePerSession: number
     totalRevenue: number
   }>>([])
+  const [pendingPayments, setPendingPayments] = useState<PaymentRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [exporting, setExporting] = useState(false)
-  const [activeTab, setActiveTab] = useState<'payments' | 'commissions' | 'final-payments'>('payments')
+  const [activeTab, setActiveTab] = useState<'payments' | 'commissions' | 'final-payments' | 'pending-payments'>('payments')
   const [filteredPayments, setFilteredPayments] = useState<PaymentRecord[]>([])
   const [filteredMentorCommissions, setFilteredMentorCommissions] = useState<Array<{
     mentorName: string
@@ -62,6 +64,7 @@ export default function Dashboard() {
     fetchMentorCommissions()
     fetchCorporateSessions()
     fetchFinalPayments()
+    fetchPendingPayments()
   }, [isAuthenticated, authLoading, router])
 
   const fetchPayments = async (showDueOnly = true) => {
@@ -126,6 +129,21 @@ export default function Dashboard() {
       setFinalPayments(data.finalPayments || [])
     } catch (error) {
       console.error('Error fetching final payments:', error)
+    }
+  }
+
+  const fetchPendingPayments = async () => {
+    try {
+      const response = await fetch('/api/payments?type=pending')
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch pending payments')
+      }
+      
+      const data = await response.json()
+      setPendingPayments(data.payments || [])
+    } catch (error) {
+      console.error('Error fetching pending payments:', error)
     }
   }
 
@@ -277,6 +295,25 @@ export default function Dashboard() {
     }
   }
 
+  const handleMarkMentorFinalPaymentsPaid = async (mentorName: string, paymentIds: string[]) => {
+    if (!mentorName) return
+    try {
+      const response = await fetch('/api/payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'markFinalPaymentsByMentorPaid', mentorName }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to mark mentor final payments as paid')
+      }
+
+      await fetchFinalPayments()
+    } catch (error) {
+      console.error('Error marking mentor final payments as paid:', error)
+    }
+  }
+
   const [emailing, setEmailing] = useState(false)
   const handleEmailMentorPayouts = async () => {
     try {
@@ -288,7 +325,8 @@ export default function Dashboard() {
         },
         body: JSON.stringify({ 
           action: 'emailMentorPayouts',
-          filteredPayments: filteredPayments.length > 0 ? filteredPayments : payments
+          filteredPayments: filteredPayments.length > 0 ? filteredPayments : payments,
+          pendingPayments: pendingPayments
         }),
       })
 
@@ -423,6 +461,19 @@ export default function Dashboard() {
                 <div className="flex items-center">
                   <CheckCircle className="w-4 h-4 mr-2" />
                   Final Payments
+                </div>
+              </button>
+              <button
+                onClick={() => setActiveTab('pending-payments')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'pending-payments'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                <div className="flex items-center">
+                  <Clock className="w-4 h-4 mr-2" />
+                  Pending Payments
                 </div>
               </button>
             </nav>
@@ -578,9 +629,9 @@ export default function Dashboard() {
             <CardHeader>
               <div className="flex justify-between items-center">
                 <div>
-                  <CardTitle>Final Payments</CardTitle>
+                  <CardTitle>Final Payments - Cumulative by Mentor</CardTitle>
                   <CardDescription>
-                    Payments from Mentor Commission Sheet with status "Due" - Mark as Paid only
+                    Payments from Mentor Commission Sheet grouped by mentor - Mark all payments for a mentor as paid together
                   </CardDescription>
                 </div>
                 <Button
@@ -599,25 +650,48 @@ export default function Dashboard() {
               </div>
             </CardHeader>
             <CardContent>
-              <PaymentTable
-                payments={finalPayments.map((fp, index) => ({
-                  id: `final_${fp.sNo}`,
-                  sNo: fp.sNo.toString(),
-                  mentorName: fp.mentorName,
-                  menteeName: fp.menteeName,
-                  sessionDate: fp.sessionDate,
-                  sessionStatus: fp.sessionStatus,
-                  rate: fp.rate,
-                  paymentStatus: fp.paymentStatus,
-                  noOfSessions: fp.noOfSessions,
-                  totalPayout: fp.totalPayout,
-                  rowIndex: index + 1
-                }))}
-                onMarkAsPaid={handleMarkFinalPaymentsPaid}
+              <CumulativeMentorPaymentsTable
+                finalPayments={finalPayments}
+                onMarkMentorPaid={handleMarkMentorFinalPaymentsPaid}
                 loading={refreshing}
-                actionButtonText="Mark as Paid"
-                showMarkAsPaidActions={true}
-                showSelection={true}
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === 'pending-payments' && (
+          <Card>
+            <CardHeader>
+              <div className="flex justify-between items-center">
+                <div>
+                  <CardTitle>Pending Payments</CardTitle>
+                  <CardDescription>
+                    Payments with status "Pending" - Waiting for feedback completion before processing
+                  </CardDescription>
+                </div>
+                <Button
+                  onClick={() => {
+                    fetchPendingPayments()
+                    fetchPayments()
+                    fetchMentorCommissions()
+                    fetchCorporateSessions()
+                    fetchFinalPayments()
+                  }}
+                  disabled={refreshing}
+                  variant="outline"
+                >
+                  <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+                  Refresh Data
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <PaymentTable
+                payments={pendingPayments}
+                loading={refreshing}
+                actionButtonText="Pending"
+                showMarkAsPaidActions={false}
+                showSelection={false}
               />
             </CardContent>
           </Card>
