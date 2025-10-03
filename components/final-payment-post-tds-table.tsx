@@ -21,37 +21,42 @@ interface FinalPayment {
   totalRevenue: number
 }
 
-interface CumulativeMentorPayment {
+interface CumulativeMentorPaymentPostTDS {
   mentorName: string
   totalSessions: number
   totalPayout: number
+  totalPayoutPostTDS: number
+  tdsAmount: number
   paymentCount: number
   payments: FinalPayment[]
-  monthlyBreakdown: { month: string; sessions: number; payout: number }[]
+  monthlyBreakdown: { month: string; sessions: number; payout: number; payoutPostTDS: number; tdsAmount: number }[]
   bankingDetails?: MentorBankingDetails
 }
 
-interface CumulativeMentorPaymentsTableProps {
+interface FinalPaymentPostTDSTableProps {
   finalPayments: FinalPayment[]
-  bankingDetails?: MentorBankingDetails[]
+  bankingDetails: MentorBankingDetails[]
   onMarkMentorPaid?: (mentorName: string, paymentIds: string[]) => Promise<void>
   loading?: boolean
 }
 
-export function CumulativeMentorPaymentsTable({ 
+export function FinalPaymentPostTDSTable({ 
   finalPayments, 
-  bankingDetails = [],
+  bankingDetails,
   onMarkMentorPaid, 
   loading = false 
-}: CumulativeMentorPaymentsTableProps) {
+}: FinalPaymentPostTDSTableProps) {
   const [selectedMentors, setSelectedMentors] = useState<Set<string>>(new Set())
   const [processing, setProcessing] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [filterMonths, setFilterMonths] = useState<string[]>([])
   const [expandedMentors, setExpandedMentors] = useState<Set<string>>(new Set())
 
-  // Aggregate payments by mentor
-  const aggregatePaymentsByMentor = (payments: FinalPayment[]): CumulativeMentorPayment[] => {
+  // TDS rate (10%)
+  const TDS_RATE = 0.10
+
+  // Aggregate payments by mentor with TDS calculations
+  const aggregatePaymentsByMentor = (payments: FinalPayment[]): CumulativeMentorPaymentPostTDS[] => {
     const mentorGroups = payments.reduce((acc, payment) => {
       const mentorName = payment.mentorName
       if (!acc[mentorName]) {
@@ -64,13 +69,15 @@ export function CumulativeMentorPaymentsTable({
     return Object.entries(mentorGroups).map(([mentorName, mentorPayments]) => {
       const totalSessions = mentorPayments.reduce((sum, p) => sum + p.noOfSessions, 0)
       const totalPayout = mentorPayments.reduce((sum, p) => sum + p.totalPayout, 0)
+      const tdsAmount = totalPayout * TDS_RATE
+      const totalPayoutPostTDS = totalPayout - tdsAmount
       
       // Find banking details for this mentor
       const mentorBankingDetails = bankingDetails.find(bd => 
         bd.mentorName.toLowerCase().trim() === mentorName.toLowerCase().trim()
       )
       
-      // Create monthly breakdown
+      // Create monthly breakdown with TDS calculations
       const monthlyBreakdown = mentorPayments.reduce((acc, payment) => {
         if (payment.sessionDate) {
           try {
@@ -78,22 +85,27 @@ export function CumulativeMentorPaymentsTable({
             if (!isNaN(date.getTime())) {
               const monthKey = date.toLocaleDateString('en-IN', { year: 'numeric', month: 'long' })
               if (!acc[monthKey]) {
-                acc[monthKey] = { sessions: 0, payout: 0 }
+                acc[monthKey] = { sessions: 0, payout: 0, payoutPostTDS: 0, tdsAmount: 0 }
               }
               acc[monthKey].sessions += payment.noOfSessions
               acc[monthKey].payout += payment.totalPayout
+              const monthTDS = payment.totalPayout * TDS_RATE
+              acc[monthKey].tdsAmount += monthTDS
+              acc[monthKey].payoutPostTDS += (payment.totalPayout - monthTDS)
             }
           } catch (e) {
             // Skip invalid dates
           }
         }
         return acc
-      }, {} as Record<string, { sessions: number; payout: number }>)
+      }, {} as Record<string, { sessions: number; payout: number; payoutPostTDS: number; tdsAmount: number }>)
 
       return {
         mentorName,
         totalSessions,
         totalPayout,
+        totalPayoutPostTDS,
+        tdsAmount,
         paymentCount: mentorPayments.length,
         payments: mentorPayments.sort((a, b) => {
           const dateA = new Date(a.sessionDate).getTime()
@@ -350,7 +362,7 @@ export function CumulativeMentorPaymentsTable({
       </div>
 
       {/* Summary Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
         <div className="bg-white p-4 rounded-lg shadow border">
           <div className="text-sm text-gray-500">Total Mentors</div>
           <div className="text-2xl font-bold text-gray-900">{cumulativePayments.length}</div>
@@ -362,20 +374,26 @@ export function CumulativeMentorPaymentsTable({
           </div>
         </div>
         <div className="bg-white p-4 rounded-lg shadow border">
-          <div className="text-sm text-gray-500">Total Payout</div>
+          <div className="text-sm text-gray-500">Total Payout (Pre-TDS)</div>
           <div className="text-2xl font-bold text-gray-900">
             {formatCurrency(cumulativePayments.reduce((sum, m) => sum + m.totalPayout, 0))}
+          </div>
+        </div>
+        <div className="bg-white p-4 rounded-lg shadow border">
+          <div className="text-sm text-gray-500">Total Payout (Post-TDS)</div>
+          <div className="text-2xl font-bold text-green-600">
+            {formatCurrency(cumulativePayments.reduce((sum, m) => sum + m.totalPayoutPostTDS, 0))}
           </div>
         </div>
       </div>
 
       {/* Desktop Table */}
       <div className="hidden md:block">
-        <div className="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
-          <table className="min-w-full divide-y divide-gray-300">
+        <div className="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg" style={{ maxWidth: '100%' }}>
+          <table className="min-w-full divide-y divide-gray-300" style={{ minWidth: '1200px', tableLayout: 'fixed' }}>
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
                   <input
                     type="checkbox"
                     checked={selectedMentors.size === cumulativePayments.length && cumulativePayments.length > 0}
@@ -383,19 +401,25 @@ export function CumulativeMentorPaymentsTable({
                     className="rounded border-gray-300 text-primary focus:ring-primary"
                   />
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-48">
                   Mentor
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Total Sessions
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">
+                  Sessions
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Payment Count
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
+                  Pre-TDS
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Total Payout
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-28">
+                  TDS (10%)
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
+                  Post-TDS
+                </th>
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-40">
+                  Banking
+                </th>
+                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-32">
                   Actions
                 </th>
               </tr>
@@ -404,7 +428,7 @@ export function CumulativeMentorPaymentsTable({
               {cumulativePayments.map((mentorData) => (
                 <>
                   <tr key={mentorData.mentorName} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-3 py-3 whitespace-nowrap">
                       <input
                         type="checkbox"
                         checked={selectedMentors.has(mentorData.mentorName)}
@@ -412,7 +436,7 @@ export function CumulativeMentorPaymentsTable({
                         className="rounded border-gray-300 text-primary focus:ring-primary"
                       />
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center">
                         <button
                           onClick={() => toggleMentorExpansion(mentorData.mentorName)}
@@ -424,39 +448,63 @@ export function CumulativeMentorPaymentsTable({
                             <ChevronRight className="w-4 h-4" />
                           )}
                         </button>
-                        <div className="flex-shrink-0 h-8 w-8">
-                          <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
-                            <User className="h-4 w-4 text-blue-600" />
+                        <div className="flex-shrink-0 h-6 w-6">
+                          <div className="h-6 w-6 rounded-full bg-blue-100 flex items-center justify-center">
+                            <User className="h-3 w-3 text-blue-600" />
                           </div>
                         </div>
-                        <div className="ml-3">
-                          <div className="text-sm font-medium text-gray-900">
+                        <div className="ml-2">
+                          <div className="text-sm font-medium text-gray-900 truncate">
                             {mentorData.mentorName}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {mentorData.paymentCount} payments
                           </div>
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900 text-center">
                       {mentorData.totalSessions}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {mentorData.paymentCount}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-bold text-gray-900">
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">
                         {formatCurrency(mentorData.totalPayout)}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <div className="text-sm font-medium text-red-600">
+                        -{formatCurrency(mentorData.tdsAmount)}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <div className="text-sm font-bold text-green-600">
+                        {formatCurrency(mentorData.totalPayoutPostTDS)}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      {mentorData.bankingDetails ? (
+                        <div className="text-xs text-gray-600">
+                          <div className="truncate" title={mentorData.bankingDetails.accountHolderName}>
+                            {mentorData.bankingDetails.accountHolderName || 'N/A'}
+                          </div>
+                          <div className="truncate" title={mentorData.bankingDetails.accountNumber}>
+                            {mentorData.bankingDetails.accountNumber || 'N/A'}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-red-500">No details</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 whitespace-nowrap">
                       <Button
                         size="sm"
                         variant="outline"
                         disabled={processing}
                         onClick={() => handleMarkIndividualMentorAsPaid(mentorData.mentorName)}
-                        className="bg-green-600 text-white border-green-600 hover:bg-green-700"
+                        className="bg-green-600 text-white border-green-600 hover:bg-green-700 text-xs px-2 py-1"
                       >
-                        <Check className="w-4 h-4 mr-2" />
-                        Mark as Paid
+                        <Check className="w-3 h-3 mr-1" />
+                        Mark Paid
                       </Button>
                     </td>
                   </tr>
@@ -464,8 +512,33 @@ export function CumulativeMentorPaymentsTable({
                   {/* Expanded Details */}
                   {expandedMentors.has(mentorData.mentorName) && (
                     <tr>
-                      <td colSpan={6} className="px-6 py-4 bg-gray-50">
+                      <td colSpan={8} className="px-6 py-4 bg-gray-50">
                         <div className="space-y-4">
+                          {/* Banking Details */}
+                          {mentorData.bankingDetails && (
+                            <div>
+                              <h4 className="text-sm font-medium text-gray-900 mb-2">Banking Details</h4>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white p-3 rounded border">
+                                <div>
+                                  <span className="text-xs text-gray-500">Account Holder:</span>
+                                  <div className="text-sm font-medium">{mentorData.bankingDetails.accountHolderName || 'N/A'}</div>
+                                </div>
+                                <div>
+                                  <span className="text-xs text-gray-500">Account Number:</span>
+                                  <div className="text-sm font-medium">{mentorData.bankingDetails.accountNumber || 'N/A'}</div>
+                                </div>
+                                <div>
+                                  <span className="text-xs text-gray-500">IFSC Code:</span>
+                                  <div className="text-sm font-medium">{mentorData.bankingDetails.ifsc || 'N/A'}</div>
+                                </div>
+                                <div>
+                                  <span className="text-xs text-gray-500">UPI ID:</span>
+                                  <div className="text-sm font-medium">{mentorData.bankingDetails.upiId || 'N/A'}</div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                          
                           {/* Monthly Breakdown */}
                           {mentorData.monthlyBreakdown.length > 0 && (
                             <div>
@@ -475,7 +548,9 @@ export function CumulativeMentorPaymentsTable({
                                   <div key={month.month} className="bg-white p-3 rounded border">
                                     <div className="text-xs text-gray-500">{month.month}</div>
                                     <div className="text-sm font-medium">{month.sessions} sessions</div>
-                                    <div className="text-sm font-bold text-green-600">{formatCurrency(month.payout)}</div>
+                                    <div className="text-sm text-gray-600">Pre-TDS: {formatCurrency(month.payout)}</div>
+                                    <div className="text-sm text-red-600">TDS: -{formatCurrency(month.tdsAmount)}</div>
+                                    <div className="text-sm font-bold text-green-600">Post-TDS: {formatCurrency(month.payoutPostTDS)}</div>
                                   </div>
                                 ))}
                               </div>
@@ -492,18 +567,26 @@ export function CumulativeMentorPaymentsTable({
                                     <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                                     <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Mentee</th>
                                     <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Sessions</th>
-                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Payout</th>
+                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Pre-TDS</th>
+                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">TDS</th>
+                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Post-TDS</th>
                                   </tr>
                                 </thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
-                                  {mentorData.payments.map((payment) => (
-                                    <tr key={payment.sNo}>
-                                      <td className="px-3 py-2 text-xs text-gray-900">{formatDate(payment.sessionDate)}</td>
-                                      <td className="px-3 py-2 text-xs text-gray-900">{payment.menteeName}</td>
-                                      <td className="px-3 py-2 text-xs text-gray-900">{payment.noOfSessions}</td>
-                                      <td className="px-3 py-2 text-xs font-medium text-gray-900">{formatCurrency(payment.totalPayout)}</td>
-                                    </tr>
-                                  ))}
+                                  {mentorData.payments.map((payment) => {
+                                    const paymentTDS = payment.totalPayout * TDS_RATE
+                                    const paymentPostTDS = payment.totalPayout - paymentTDS
+                                    return (
+                                      <tr key={payment.sNo}>
+                                        <td className="px-3 py-2 text-xs text-gray-900">{formatDate(payment.sessionDate)}</td>
+                                        <td className="px-3 py-2 text-xs text-gray-900">{payment.menteeName}</td>
+                                        <td className="px-3 py-2 text-xs text-gray-900">{payment.noOfSessions}</td>
+                                        <td className="px-3 py-2 text-xs font-medium text-gray-900">{formatCurrency(payment.totalPayout)}</td>
+                                        <td className="px-3 py-2 text-xs font-medium text-red-600">-{formatCurrency(paymentTDS)}</td>
+                                        <td className="px-3 py-2 text-xs font-medium text-green-600">{formatCurrency(paymentPostTDS)}</td>
+                                      </tr>
+                                    )
+                                  })}
                                 </tbody>
                               </table>
                             </div>
@@ -559,10 +642,30 @@ export function CumulativeMentorPaymentsTable({
                 <span className="text-sm font-medium text-gray-900">{mentorData.totalSessions}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-500 font-medium">Total Payout</span>
-                <span className="text-sm font-bold text-gray-900">{formatCurrency(mentorData.totalPayout)}</span>
+                <span className="text-sm text-gray-500">Pre-TDS Amount</span>
+                <span className="text-sm font-medium text-gray-900">{formatCurrency(mentorData.totalPayout)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-500">TDS (10%)</span>
+                <span className="text-sm font-medium text-red-600">-{formatCurrency(mentorData.tdsAmount)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-500 font-medium">Post-TDS Amount</span>
+                <span className="text-sm font-bold text-green-600">{formatCurrency(mentorData.totalPayoutPostTDS)}</span>
               </div>
             </div>
+            
+            {/* Banking Details for Mobile */}
+            {mentorData.bankingDetails && (
+              <div className="border-t pt-3 mb-3">
+                <div className="text-xs text-gray-500 mb-1">Banking Details</div>
+                <div className="text-xs text-gray-700">
+                  <div>{mentorData.bankingDetails.accountHolderName || 'N/A'}</div>
+                  <div>{mentorData.bankingDetails.accountNumber || 'N/A'}</div>
+                  <div>{mentorData.bankingDetails.ifsc || 'N/A'}</div>
+                </div>
+              </div>
+            )}
             
             {/* Expanded Details for Mobile */}
             {expandedMentors.has(mentorData.mentorName) && (
@@ -572,7 +675,7 @@ export function CumulativeMentorPaymentsTable({
                     <div className="text-xs text-gray-500">{month.month}</div>
                     <div className="flex justify-between">
                       <span className="text-sm">{month.sessions} sessions</span>
-                      <span className="text-sm font-bold text-green-600">{formatCurrency(month.payout)}</span>
+                      <span className="text-sm font-bold text-green-600">{formatCurrency(month.payoutPostTDS)}</span>
                     </div>
                   </div>
                 ))}

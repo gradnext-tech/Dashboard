@@ -33,6 +33,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ payments: pendingPayments })
     }
 
+    if (type === 'banking-details') {
+      const bankingDetails = await googleSheetsService.getMentorBankingDetails()
+      return NextResponse.json({ bankingDetails })
+    }
+
     let payments
     if (type === 'due') {
       payments = await googleSheetsService.getDuePayments()

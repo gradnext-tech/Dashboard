@@ -9,7 +9,8 @@ import { PaymentTable } from '@/components/payment-table'
 import { MentorCommissionTable } from '@/components/mentor-commission-table'
 import { CorporateSessionsTable } from '@/components/corporate-sessions-table'
 import { CumulativeMentorPaymentsTable } from '@/components/cumulative-mentor-payments-table'
-import { PaymentRecord, CorporateSessionRecord } from '@/lib/google-sheets'
+import { FinalPaymentPostTDSTable } from '@/components/final-payment-post-tds-table'
+import { PaymentRecord, CorporateSessionRecord, MentorBankingDetails } from '@/lib/google-sheets'
 import { RefreshCw, LogOut, DollarSign, Clock, CheckCircle, Send, Users, BarChart3, Building2, Mail } from 'lucide-react'
 
 export default function Dashboard() {
@@ -38,10 +39,11 @@ export default function Dashboard() {
     totalRevenue: number
   }>>([])
   const [pendingPayments, setPendingPayments] = useState<PaymentRecord[]>([])
+  const [bankingDetails, setBankingDetails] = useState<MentorBankingDetails[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [exporting, setExporting] = useState(false)
-  const [activeTab, setActiveTab] = useState<'payments' | 'commissions' | 'final-payments' | 'pending-payments'>('payments')
+  const [activeTab, setActiveTab] = useState<'payments' | 'commissions' | 'final-payments-post-tds' | 'pending-payments'>('payments')
   const [filteredPayments, setFilteredPayments] = useState<PaymentRecord[]>([])
   const [filteredMentorCommissions, setFilteredMentorCommissions] = useState<Array<{
     mentorName: string
@@ -65,6 +67,7 @@ export default function Dashboard() {
     fetchCorporateSessions()
     fetchFinalPayments()
     fetchPendingPayments()
+    fetchBankingDetails()
   }, [isAuthenticated, authLoading, router])
 
   const fetchPayments = async (showDueOnly = true) => {
@@ -144,6 +147,21 @@ export default function Dashboard() {
       setPendingPayments(data.payments || [])
     } catch (error) {
       console.error('Error fetching pending payments:', error)
+    }
+  }
+
+  const fetchBankingDetails = async () => {
+    try {
+      const response = await fetch('/api/payments?type=banking-details')
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch banking details')
+      }
+      
+      const data = await response.json()
+      setBankingDetails(data.bankingDetails || [])
+    } catch (error) {
+      console.error('Error fetching banking details:', error)
     }
   }
 
@@ -451,15 +469,15 @@ export default function Dashboard() {
                 </div>
               </button>
               <button
-                onClick={() => setActiveTab('final-payments')}
+                onClick={() => setActiveTab('final-payments-post-tds')}
                 className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === 'final-payments'
+                  activeTab === 'final-payments-post-tds'
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
                 <div className="flex items-center">
-                  <CheckCircle className="w-4 h-4 mr-2" />
+                  <DollarSign className="w-4 h-4 mr-2" />
                   Final Payments
                 </div>
               </button>
@@ -624,19 +642,20 @@ export default function Dashboard() {
           </Card>
         )}
 
-        {activeTab === 'final-payments' && (
+        {activeTab === 'final-payments-post-tds' && (
           <Card>
             <CardHeader>
               <div className="flex justify-between items-center">
                 <div>
-                  <CardTitle>Final Payments - Cumulative by Mentor</CardTitle>
+                  <CardTitle>Final Payments Post TDS - With Banking Details</CardTitle>
                   <CardDescription>
-                    Payments from Mentor Commission Sheet grouped by mentor - Mark all payments for a mentor as paid together
+                    Final payments with 10% TDS deduction and complete banking information for processing
                   </CardDescription>
                 </div>
                 <Button
                   onClick={() => {
                     fetchFinalPayments()
+                    fetchBankingDetails()
                     fetchPayments()
                     fetchMentorCommissions()
                     fetchCorporateSessions()
@@ -650,8 +669,9 @@ export default function Dashboard() {
               </div>
             </CardHeader>
             <CardContent>
-              <CumulativeMentorPaymentsTable
+              <FinalPaymentPostTDSTable
                 finalPayments={finalPayments}
+                bankingDetails={bankingDetails}
                 onMarkMentorPaid={handleMarkMentorFinalPaymentsPaid}
                 loading={refreshing}
               />

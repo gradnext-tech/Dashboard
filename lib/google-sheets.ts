@@ -21,6 +21,15 @@ export interface MentorRate {
   rate: number
 }
 
+export interface MentorBankingDetails {
+  mentorName: string
+  email: string
+  accountHolderName: string
+  accountNumber: string
+  ifsc: string
+  upiId: string
+}
+
 export interface MentorDetails {
   mentorName: string
   email: string
@@ -709,6 +718,60 @@ class GoogleSheetsService {
       return mentorDetails
     } catch (error) {
       console.error('Error fetching mentor details:', error)
+      return []
+    }
+  }
+
+  async getMentorBankingDetails(): Promise<MentorBankingDetails[]> {
+    try {
+      const rateListSheetId = process.env.RATE_LIST_SHEET_ID
+      
+      if (!rateListSheetId) {
+        throw new Error('RATE_LIST_SHEET_ID is not configured')
+      }
+
+      // Get all data from the Rate List sheet
+      // Columns: A=Timestamp, B=Full Name, C=Email ID, D=Phone Number, E=PAN, F=Aadhar Card Number, 
+      // G=Name on the Account, H=Account Number, I=Bank Name, J=Branch Name, K=Bank IFSC Code, L=UPI ID, M=Rate
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: rateListSheetId,
+        range: 'A:M', // All columns from A to M
+      })
+
+      const rows = response.data.values || []
+      
+      if (rows.length === 0) {
+        return []
+      }
+
+      const bankingDetails: MentorBankingDetails[] = []
+      
+      for (let i = 1; i < rows.length; i++) { // Skip header row
+        const row = rows[i]
+        if (row.length === 0) continue
+
+        const mentorName = (row[1] || '').trim() // Column B: Full Name
+        const email = (row[2] || '').trim() // Column C: Email ID
+        const accountHolderName = (row[6] || '').trim() // Column G: Name on the Account
+        const accountNumber = (row[7] || '').trim() // Column H: Account Number
+        const ifsc = (row[10] || '').trim() // Column K: Bank IFSC Code
+        const upiId = (row[11] || '').trim() // Column L: UPI ID
+
+        if (mentorName) {
+          bankingDetails.push({
+            mentorName: mentorName.toLowerCase().trim(),
+            email: email,
+            accountHolderName: accountHolderName,
+            accountNumber: accountNumber,
+            ifsc: ifsc,
+            upiId: upiId
+          })
+        }
+      }
+
+      return bankingDetails
+    } catch (error) {
+      console.error('Error fetching mentor banking details:', error)
       return []
     }
   }
