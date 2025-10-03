@@ -1280,10 +1280,10 @@ class GoogleSheetsService {
         throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
       }
 
-      // Get current data from Mentor commission sheet
+      // Get current data from Mentor commission sheet (extended range to include Date of Payment column O)
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: mentorCommissionSheetId,
-        range: 'Mentor commission!A:K',
+        range: 'Mentor commission!A:O',
       })
 
       const rows = response.data.values
@@ -1303,6 +1303,8 @@ class GoogleSheetsService {
 
       // Find rows to update and prepare batch update
       const updates: any[] = []
+      const currentDate = new Date().toLocaleDateString('en-IN') // Format: DD/MM/YYYY
+      const TDS_RATE = 10 // 10%
       
       for (let i = 1; i < rows.length; i++) { // Skip header row
         const row = rows[i]
@@ -1310,10 +1312,39 @@ class GoogleSheetsService {
         
         const rowSNo = parseInt(row[0])
         if (sNoList.includes(rowSNo)) {
+          // Get Total Payout from column I (index 8)
+          const totalPayout = parseFloat(row[8]) || 0
+          const tdsAmount = (totalPayout * TDS_RATE) / 100
+          const postTdsAmount = totalPayout - tdsAmount
+          
           // Update Payment Status column (column G, index 6) to "Paid"
           updates.push({
             range: `Mentor commission!G${i + 1}`, // +1 because sheets are 1-indexed
             values: [['Paid']]
+          })
+          
+          // Update TDS % column (column L, index 11) with 10% (as decimal 0.1)
+          updates.push({
+            range: `Mentor commission!L${i + 1}`,
+            values: [[TDS_RATE / 100]]
+          })
+          
+          // Update TDS Paid column (column M, index 12) with calculated TDS amount
+          updates.push({
+            range: `Mentor commission!M${i + 1}`,
+            values: [[tdsAmount]]
+          })
+          
+          // Update Post TDS column (column N, index 13) with amount after TDS
+          updates.push({
+            range: `Mentor commission!N${i + 1}`,
+            values: [[postTdsAmount]]
+          })
+          
+          // Update Date of Payment column (column O, index 14) with current date
+          updates.push({
+            range: `Mentor commission!O${i + 1}`, // +1 because sheets are 1-indexed
+            values: [[currentDate]]
           })
         }
       }
@@ -1345,10 +1376,10 @@ class GoogleSheetsService {
         throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
       }
 
-      // Get current data from Mentor commission sheet
+      // Get current data from Mentor commission sheet (extended range to include Date of Payment column O)
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: mentorCommissionSheetId,
-        range: 'Mentor commission!A:K',
+        range: 'Mentor commission!A:O',
       })
 
       const rows = response.data.values
@@ -1358,6 +1389,8 @@ class GoogleSheetsService {
 
       const normalizedMentorName = mentorName.trim().toLowerCase()
       const updates: any[] = []
+      const currentDate = new Date().toLocaleDateString('en-IN') // Format: DD/MM/YYYY
+      const TDS_RATE = 10 // 10%
       
       // Find all rows for this mentor with "Due" status and mark them as "Paid"
       for (let i = 1; i < rows.length; i++) { // Skip header row
@@ -1368,9 +1401,39 @@ class GoogleSheetsService {
         const paymentStatus = (row[6] || '').toString().trim().toLowerCase() // Column G is Payment Status
         
         if (rowMentorName === normalizedMentorName && paymentStatus === 'due') {
+          // Get Total Payout from column I (index 8)
+          const totalPayout = parseFloat(row[8]) || 0
+          const tdsAmount = (totalPayout * TDS_RATE) / 100
+          const postTdsAmount = totalPayout - tdsAmount
+          
+          // Update Payment Status column (column G, index 6) to "Paid"
           updates.push({
             range: `Mentor commission!G${i + 1}`, // +1 because sheets are 1-indexed
             values: [['Paid']]
+          })
+          
+          // Update TDS % column (column L, index 11) with 10% (as decimal 0.1)
+          updates.push({
+            range: `Mentor commission!L${i + 1}`,
+            values: [[TDS_RATE / 100]]
+          })
+          
+          // Update TDS Paid column (column M, index 12) with calculated TDS amount
+          updates.push({
+            range: `Mentor commission!M${i + 1}`,
+            values: [[tdsAmount]]
+          })
+          
+          // Update Post TDS column (column N, index 13) with amount after TDS
+          updates.push({
+            range: `Mentor commission!N${i + 1}`,
+            values: [[postTdsAmount]]
+          })
+          
+          // Update Date of Payment column (column O, index 14) with current date
+          updates.push({
+            range: `Mentor commission!O${i + 1}`, // +1 because sheets are 1-indexed
+            values: [[currentDate]]
           })
         }
       }
