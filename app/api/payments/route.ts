@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 import { googleSheetsService } from '@/lib/google-sheets'
 import puppeteer from 'puppeteer-core'
+import chromium from '@sparticuz/chromium'
 import nodemailer from 'nodemailer'
 
 type InvoiceItem = { date: string; menteeName: string; sessions: number; payout: number }
@@ -176,19 +177,12 @@ async function generateSimpleInvoicePDF(params: {
   
   let browser
   try {
-    // Launch Puppeteer with Chrome for Vercel
+    // Launch Puppeteer with Vercel-compatible Chromium
     browser = await puppeteer.launch({
+      args: [...chromium.args, '--hide-scrollbars', '--disable-web-security'],
+      defaultViewport: { width: 1200, height: 800 },
+      executablePath: await chromium.executablePath(),
       headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-        '--disable-gpu'
-      ]
     })
     
     const page = await browser.newPage()

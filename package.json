@@ -13,6 +13,7 @@
   "dependencies": {
     "@radix-ui/react-dialog": "^1.0.5",
     "@radix-ui/react-toast": "^1.1.5",
+    "@sparticuz/chromium": "^141.0.0",
     "@types/node": "^20",
     "@types/puppeteer-core": "^5.4.0",
     "@types/react": "^18",
