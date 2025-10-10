@@ -3,8 +3,6 @@ import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 import { googleSheetsService } from '@/lib/google-sheets'
-import puppeteer from 'puppeteer-core'
-import chromium from '@sparticuz/chromium'
 import nodemailer from 'nodemailer'
 
 type InvoiceItem = { date: string; menteeName: string; sessions: number; payout: number }
@@ -22,6 +20,10 @@ async function generateSimpleInvoicePDF(params: {
   const { invoiceNumber, mentorName, pan, totalSessions, ratePerSession, totalAmount, dateOfPayment } = params
   
   console.log('Generating PDF using Puppeteer...')
+  
+  // Dynamic imports to avoid webpack bundling issues
+  const puppeteer = await import('puppeteer-core')
+  const chromium = await import('@sparticuz/chromium')
   
   // Create HTML content for the invoice
   const htmlContent = `
@@ -178,10 +180,10 @@ async function generateSimpleInvoicePDF(params: {
   let browser
   try {
     // Launch Puppeteer with Vercel-compatible Chromium
-    browser = await puppeteer.launch({
-      args: [...chromium.args, '--hide-scrollbars', '--disable-web-security'],
+    browser = await puppeteer.default.launch({
+      args: [...chromium.default.args, '--hide-scrollbars', '--disable-web-security'],
       defaultViewport: { width: 1200, height: 800 },
-      executablePath: await chromium.executablePath(),
+      executablePath: await chromium.default.executablePath(),
       headless: true,
     })
     
