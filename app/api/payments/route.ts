@@ -18,7 +18,7 @@ function ensureFontFilesExist() {
   return
 }
 
-// PDF generation function using custom bundled fonts
+// PDF generation function that avoids font loading issues completely
 async function generateSimpleInvoicePDF(params: {
   invoiceNumber: string
   mentorName: string
@@ -30,129 +30,10 @@ async function generateSimpleInvoicePDF(params: {
 }): Promise<Buffer> {
   const { invoiceNumber, mentorName, pan, totalSessions, ratePerSession, totalAmount, dateOfPayment } = params
   
-  console.log('Generating PDF with custom bundled fonts...')
+  console.log('Generating PDF without font dependencies...')
   
-  // Create PDFDocument
-  const doc = new PDFDocument({ 
-    size: 'A4',
-    margins: {
-      top: 50,
-      bottom: 50,
-      left: 50,
-      right: 50
-    }
-  })
-  
-  const buffers: Buffer[] = []
-  doc.on('data', (b: Buffer) => buffers.push(b))
-  
-  // Register custom fonts
-  try {
-    const regularFontPath = path.join(process.cwd(), 'public', 'fonts', 'Roboto-Regular.ttf')
-    const boldFontPath = path.join(process.cwd(), 'public', 'fonts', 'Roboto-Bold.ttf')
-    
-    doc.registerFont('Roboto', regularFontPath)
-    doc.registerFont('Roboto-Bold', boldFontPath)
-    console.log('Custom fonts registered successfully')
-  } catch (fontError) {
-    console.error('Font registration failed:', fontError)
-    // Continue without custom fonts - PDFKit will use defaults
-  }
-
-  // Page dimensions (A4: 595 x 842 points)
-  const pageWidth = 595
-  const leftMargin = 50
-  const rightMargin = 50
-  const contentWidth = pageWidth - leftMargin - rightMargin // 495 points
-
-  // Colors
-  const darkText = '#1f2937'
-  const grayText = '#6b7280'
-
-  // ===== HEADER SECTION =====
-  // Title - "Invoice" (perfectly centered at top)
-  const centerX = leftMargin + (contentWidth / 2)
-  doc.font('Roboto-Bold').fontSize(36).fillColor(darkText).text('Invoice', centerX, 60, { 
-    align: 'center' 
-  })
-
-  // ===== BILLED BY & BILLED TO SECTION =====
-  const sectionTop = 140
-  
-  // Billed By (left column)
-  doc.fontSize(11).fillColor(darkText).text('Billed By', leftMargin, sectionTop)
-  doc.fontSize(12).fillColor(darkText).text('Kashish Malhotra', leftMargin, sectionTop + 22)
-  doc.fontSize(9).fillColor(grayText)
-  doc.text('1-B Shastri Colony Ambala Cantt,', leftMargin, sectionTop + 40)
-  doc.text('Ambala Cantt, India - 133001', leftMargin, sectionTop + 54)
-  doc.text('Phone: +91 82228 66630', leftMargin, sectionTop + 68)
-
-  // Billed To (middle column)
-  const middleColX = 250
-  doc.fontSize(11).fillColor(darkText).text('Billed To', middleColX, sectionTop)
-  doc.fontSize(12).fillColor(darkText).text(mentorName, middleColX, sectionTop + 22, { width: 200 })
-  doc.fontSize(9).fillColor(grayText).text(`PAN: ${pan || 'N/A'}`, middleColX, sectionTop + 40)
-
-  // Invoice Details (right column)
-  const rightColX = 450
-  doc.fontSize(11).fillColor(darkText).text('Invoice Details', rightColX, sectionTop)
-  
-  doc.fontSize(9).fillColor(grayText).text('Invoice No #', rightColX, sectionTop + 22)
-  doc.fillColor(darkText).text(invoiceNumber, rightColX + 80, sectionTop + 22)
-  
-  doc.fillColor(grayText).text('Invoice Date', rightColX, sectionTop + 38)
-  doc.fillColor(darkText).text(dateOfPayment, rightColX + 80, sectionTop + 38)
-
-  // ===== TABLE SECTION =====
-  const tableTop = 250
-  const tableWidth = contentWidth
-  
-  // Table column positions - shifted left for better visibility
-  const col1X = leftMargin + 15       // Item
-  const col2X = leftMargin + 200      // Quantity (moved left by 50px)
-  const col3X = leftMargin + 280      // Rate (moved left by 50px)
-  const col4X = leftMargin + 360      // Amount (moved left by 60px)
-  
-  // Table headers
-  doc.fontSize(10).fillColor(grayText)
-  doc.text('Item', col1X, tableTop + 10)
-  doc.text('Quantity', col2X, tableTop + 10, { width: 70, align: 'center' })
-  doc.text('Rate', col3X, tableTop + 10, { width: 80, align: 'right' })
-  doc.text('Amount', col4X, tableTop + 10, { width: 100, align: 'right' })
-
-  // Table row - Vendor payments
-  const rowTop = tableTop + 42
-  doc.fontSize(10).fillColor(darkText)
-  doc.text('Vendor payments', col1X, rowTop)
-  doc.text(totalSessions.toString(), col2X, rowTop, { width: 70, align: 'center' })
-  
-  // Format amounts with rupee symbol
-  const formattedRate = `₹${ratePerSession.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  const formattedAmount = `₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  
-  doc.text(formattedRate, col3X, rowTop, { width: 80, align: 'right' })
-  doc.text(formattedAmount, col4X, rowTop, { width: 100, align: 'right' })
-
-  // ===== REDUCTIONS & TOTAL SECTION =====
-  const summaryTop = rowTop + 50
-  
-  // Reductions row
-  doc.fontSize(10).fillColor(grayText)
-  doc.text('Reductions', col3X, summaryTop, { width: 80, align: 'right' })
-  doc.fillColor(darkText).text('₹0.00', col4X, summaryTop, { width: 100, align: 'right' })
-
-  // Total section with white background and dark font
-  const totalBoxTop = summaryTop + 30
-  
-  // Total label and amount - dark font on white background
-  doc.fontSize(12).fillColor(darkText)
-  doc.text('Total (INR)', col3X, totalBoxTop + 12, { width: 80, align: 'right' })
-  
-  const formattedTotal = `₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  doc.fontSize(14).text(formattedTotal, col4X, totalBoxTop + 10, { width: 100, align: 'right' })
-
-  doc.end()
-  return await new Promise<Buffer>((resolve) => doc.on('end', () => resolve(Buffer.concat(buffers))))
+  // Use the simple PDF generation that doesn't trigger font loading
+  return generateSimplePDFInvoice(params)
 }
 
 // Fallback function to generate a simple PDF invoice when PDFKit fails
