@@ -12,53 +12,10 @@ type InvoiceItem = { date: string; menteeName: string; sessions: number; payout:
 
 // Function to ensure font files exist before PDFKit initialization
 function ensureFontFilesExist() {
-  const fontDir = path.join(process.cwd(), '.next', 'server', 'vendor-chunks', 'data')
-  const requiredFonts = ['Helvetica.afm', 'Courier.afm', 'Times-Roman.afm']
-  
-  // Create directory if it doesn't exist
-  if (!fs.existsSync(fontDir)) {
-    fs.mkdirSync(fontDir, { recursive: true })
-  }
-  
-  // Check if required fonts exist, if not create minimal dummy files
-  requiredFonts.forEach(fontFile => {
-    const fontPath = path.join(fontDir, fontFile)
-    if (!fs.existsSync(fontPath)) {
-      // Create a minimal AFM file that PDFKit can read
-      const minimalAfm = `StartFontMetrics 4.1
-FontName ${fontFile.replace('.afm', '')}
-FullName ${fontFile.replace('.afm', '')}
-FamilyName ${fontFile.replace('.afm', '')}
-Weight Medium
-ItalicAngle 0
-IsFixedPitch false
-FontBBox -168 -218 1000 898
-UnderlinePosition -100
-UnderlineThickness 50
-Version 003.000
-Notice Copyright (c) 1985, 1987, 1989, 1990, 1997 Adobe Systems Incorporated.  All Rights Reserved.
-EncodingScheme AdobeStandardEncoding
-CapHeight 662
-XHeight 450
-Ascender 683
-Descender -217
-StdHW 28
-StdVW 88
-StartCharMetrics 315
-C 32 ; WX 278 ; N space ; B 0 0 0 0 ;
-EndCharMetrics
-StartKernPairs 0
-EndKernPairs
-EndFontMetrics`
-      
-      try {
-        fs.writeFileSync(fontPath, minimalAfm)
-        console.log(`Created minimal font file: ${fontFile}`)
-      } catch (error) {
-        console.warn(`Failed to create font file ${fontFile}:`, error)
-      }
-    }
-  })
+  // In production (Vercel), we can't create directories in the build path
+  // PDFKit should work with default fonts without explicit font files
+  console.log('Skipping font file creation in production environment')
+  return
 }
 
 async function generateStyledInvoicePDF(params: {
@@ -72,7 +29,7 @@ async function generateStyledInvoicePDF(params: {
 }): Promise<Buffer> {
   const { invoiceNumber, mentorName, pan, totalSessions, ratePerSession, totalAmount, dateOfPayment } = params
   
-  // Ensure font files exist before PDFKit initialization
+  // Skip font file creation in production - PDFKit works with default fonts
   ensureFontFilesExist()
   
   // Configure PDFDocument with proper margins for A4 page
@@ -250,8 +207,10 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('API POST request received')
     const body = await request.json()
     const { action, paymentIds, mentorName, dateOfPayment } = body
+    console.log('Request body:', { action, mentorName, paymentIds: paymentIds?.length })
     if (action === 'markTdsByMentorPaid') {
       const { mentorName, paymentIds } = body
       
@@ -845,8 +804,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
   } catch (error) {
     console.error('Error processing payment action:', error)
+    console.error('Error details:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      name: error instanceof Error ? error.name : undefined
+    })
     return NextResponse.json(
-      { error: 'Failed to process payment action' },
+      { 
+        error: 'Failed to process payment action',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
       { status: 500 }
     )
   }

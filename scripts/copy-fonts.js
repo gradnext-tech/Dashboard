@@ -3,6 +3,15 @@ const path = require('path');
 
 console.log('Copying PDFKit font files...');
 
+// Check if we're in a production environment where we can't modify build directories
+const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
+
+if (isProduction) {
+  console.log('Production environment detected. Skipping font file copying.');
+  console.log('PDFKit will use default fonts in production.');
+  process.exit(0);
+}
+
 // Source directory where PDFKit stores its font files
 const sourceDir = path.join(__dirname, '..', 'node_modules', 'pdfkit', 'js', 'data');
 
