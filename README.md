@@ -8,7 +8,9 @@ A modern, secure payment tracking dashboard built with Next.js 14, TypeScript, a
 - **Payment Management**: Track and manage mentor payments with due/paid status
 - **Session Tracking**: Monitor individual and corporate sessions
 - **Commission Calculation**: Automatic calculation of mentor commissions based on rates
-- **Email Notifications**: Send payout summaries to mentors via email
+- **Invoice Generation**: Auto-generate PDF invoices and store in Google Drive
+- **Vendor Payments**: Automatically record payments in Vendor Payments sheet
+- **TDS Management**: Track TDS payments and mark as paid
 - **Google Sheets Integration**: Real-time data sync with Google Sheets
 - **Manual Entry**: Add manual payment entries when needed
 - **Export Capabilities**: Export data to Mentor Commission sheets
@@ -32,6 +34,8 @@ A modern, secure payment tracking dashboard built with Next.js 14, TypeScript, a
 - **UI Components**: Radix UI + Custom components
 - **Authentication**: Custom password-based auth
 - **Data Source**: Google Sheets API
+- **File Storage**: Google Drive API
+- **Invoice Generation**: PDFKit
 - **Email**: Nodemailer
 - **Icons**: Lucide React
 - **Deployment**: Vercel
@@ -109,6 +113,10 @@ GOOGLE_SHEETS_CLIENT_EMAIL=your-service-account-email@your-project.iam.gservicea
 
 # Google Sheets Configuration
 GOOGLE_SHEET_ID=your-google-sheet-id
+MENTOR_COMMISSION_SHEET_ID=your-mentor-commission-sheet-id
+
+# Google Drive Configuration (for invoice storage)
+GOOGLE_DRIVE_INVOICE_FOLDER_ID=your-google-drive-folder-id
 
 # Organization Domain Restriction
 ALLOWED_EMAIL_DOMAIN=yourcompany.com
@@ -126,17 +134,47 @@ FROM_EMAIL=no-reply@gradnext.com
 #### Create Service Account
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a new project or select existing
-3. Enable Google Sheets API
+3. Enable **Google Sheets API** and **Google Drive API**
 4. Go to "Credentials" → "Create Credentials" → "Service Account"
 5. Download the JSON key file
 6. Extract `private_key` and `client_email` for environment variables
+7. Share your Google Sheets and Drive folder with the service account email
+
+#### Google Drive Setup (IMPORTANT: Use Shared Drive)
+
+**Service Accounts require Shared Drives (Team Drives) - regular folders won't work!**
+
+1. **Create or Access a Shared Drive**:
+   - In Google Drive, click "Shared drives" in the left sidebar
+   - Click "New" to create a new Shared Drive (if you don't have one)
+   - Name it (e.g., "GradNext Invoices")
+
+2. **Create a folder inside the Shared Drive**:
+   - Open your Shared Drive
+   - Create a new folder for invoices (e.g., "Vendor Invoices")
+
+3. **Add Service Account as Member**:
+   - Click on the Shared Drive name → Right-click → "Manage members"
+   - Add your service account email (e.g., `your-service-account@your-project.iam.gserviceaccount.com`)
+   - Give it "Content Manager" or "Manager" permissions
+
+4. **Get Folder ID**:
+   - Open the folder you created inside the Shared Drive
+   - Copy the folder ID from the URL: `https://drive.google.com/drive/folders/YOUR_FOLDER_ID`
+   - The ID is the last part of the URL
+
+5. **Add to Environment Variables**:
+   - Add the folder ID to `GOOGLE_DRIVE_INVOICE_FOLDER_ID` in your `.env.local`
+
+**Note**: You MUST use a Shared Drive folder, not a regular "My Drive" folder. Service Accounts don't have storage quota in regular drives.
 
 #### Google Sheets Structure
 Your Google Sheet should have these sheets:
 - **Session Info**: Main data with columns for mentor, mentee, date, status, etc.
-- **Mentor Commission**: Calculated commissions
+- **Mentor Commission**: Calculated commissions with TDS columns
 - **Rates**: Mentor rate information
 - **Corporate Sessions**: Corporate session data
+- **Vendor Payments**: Payment records with invoice links (auto-populated)
 
 ### 4. Authentication Setup
 The app uses a simple password-based authentication system. The master password is defined in `lib/auth.ts`:
@@ -186,6 +224,29 @@ Visit `http://localhost:3000` and use the master password to access the dashboar
 | G | Payment Status |
 | H | No. of Sessions |
 | I | Total Payout |
+| J | Revenue per Session |
+| K | Total Revenue |
+| L | TDS % |
+| M | TDS Paid |
+| N | Post TDS |
+| O | Date of Payment |
+| P | TDS Paid Tag |
+
+#### Vendor Payments Sheet (Auto-populated)
+| Column | Description |
+|--------|-------------|
+| A | Sr No |
+| B | Vendor Name |
+| C | Vendor PAN |
+| D | Payment Date |
+| E | Total Amount |
+| F | TDS% |
+| G | TDS |
+| H | Final Amount Paid |
+| I | TDS Paid |
+| J | Invoice Link |
+
+This sheet is automatically populated when you mark final payments as paid.
 
 ## 🔐 Authentication Flow
 
@@ -195,10 +256,22 @@ Visit `http://localhost:3000` and use the master password to access the dashboar
 4. **Session**: Client-side authentication state management
 5. **Protection**: All dashboard routes require authentication
 
-## 📧 Email Notifications
+## 📧 Invoice & Payment Processing
 
-### Email Template
-The system sends automated emails to mentors with pending payouts:
+### Invoice Generation
+When you mark final payments as paid, the system automatically:
+
+1. **Generates PDF Invoice**: Creates a styled invoice with all payment details
+2. **Uploads to Google Drive**: Stores the invoice in the configured Drive folder
+3. **Records in Vendor Payments**: Adds entry to the Vendor Payments sheet with:
+   - Vendor name and PAN
+   - Payment date
+   - Total amount, TDS details
+   - Invoice link from Google Drive
+4. **Marks as Paid**: Updates payment status in the system
+
+### Email Notifications (Optional)
+The system can send automated emails to mentors with pending payouts:
 
 **Subject**: "Your pending payout summary"
 
@@ -245,8 +318,11 @@ Ensure all environment variables are set in your deployment platform:
 - `GET /api/payments?type=all-payments` - Get all payments
 - `GET /api/payments?type=mentor-commissions` - Get mentor commissions
 - `GET /api/payments?type=corporate-sessions` - Get corporate sessions
+- `GET /api/payments?type=tds-payments` - Get TDS payments
 - `POST /api/payments` - Payment operations:
   - `markPaid` - Mark payments as paid
+  - `markFinalPaymentsByMentorPaid` - Mark final payments (generates invoice & adds to Vendor Payments)
+  - `markTdsByMentorPaid` - Mark TDS payments as paid
   - `exportToMentorCommission` - Export to commission sheet
   - `addManualEntry` - Add manual entry
   - `emailMentorPayouts` - Send email notifications

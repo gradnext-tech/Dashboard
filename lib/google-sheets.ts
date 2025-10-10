@@ -65,15 +65,21 @@ class GoogleSheetsService {
   private sheets: any
   private auth: any
 
+  private drive: any
+
   constructor() {
     this.auth = new google.auth.GoogleAuth({
       credentials: {
         client_email: process.env.GOOGLE_SHEETS_CLIENT_EMAIL,
         private_key: process.env.GOOGLE_SHEETS_PRIVATE_KEY?.replace(/\\n/g, '\n'),
       },
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+      scopes: [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/drive.file'
+      ],
     })
     this.sheets = google.sheets({ version: 'v4', auth: this.auth })
+    this.drive = google.drive({ version: 'v3', auth: this.auth })
   }
 
   async getPaymentData(): Promise<PaymentRecord[]> {
@@ -334,7 +340,13 @@ class GoogleSheetsService {
       
       // Prepare data for export (with auto-generated S No. and calculated rates)
       const exportData = payments.map(payment => {
-        const mentorRate = this.getMentorRate(mentorRates, payment.mentorName)
+        const isMisc = (payment.sheetName || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
+        // For Miscellaneous Tracker, prefer the per-row rate coming from the corporate sheet
+        const rowRateIsValid = typeof payment.rate === 'number' && isFinite(payment.rate) && payment.rate > 0
+        const mentorRate = isMisc && rowRateIsValid
+          ? payment.rate
+          : this.getMentorRate(mentorRates, payment.mentorName)
+
         const totalPayout = mentorRate * payment.noOfSessions
         const revenuePerSession = mentorRate // Revenue per session is the same as rate
         const totalRevenue = mentorRate * payment.noOfSessions // Total revenue is rate * sessions
@@ -345,7 +357,7 @@ class GoogleSheetsService {
           payment.menteeName,    // Mentee Name
           payment.sessionDate,   // Session Date
           'Completed',           // Session Status (always "Completed" for exported sessions)
-          mentorRate,            // Rate from rates sheet
+          mentorRate,            // Rate (per-row for Miscellaneous, otherwise from rate list)
           'Due',                 // Payment Status (always "Due" in Mentor Commission)
           payment.noOfSessions,  // No. of Sessions
           totalPayout,           // Total Payout (rate * sessions)
@@ -776,6 +788,34 @@ class GoogleSheetsService {
     }
   }
 
+  async getMentorPAN(mentorName: string): Promise<string> {
+    try {
+      const rateListSheetId = process.env.RATE_LIST_SHEET_ID
+      if (!rateListSheetId) {
+        throw new Error('RATE_LIST_SHEET_ID is not configured')
+      }
+
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: rateListSheetId,
+        range: 'A:M',
+      })
+
+      const rows = response.data.values || []
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i]
+        if (!row || row.length === 0) continue
+        const name = (row[1] || '').toString().trim().toLowerCase()
+        if (name && name === mentorName.toLowerCase().trim()) {
+          return (row[4] || '').toString().trim() // Column E: PAN
+        }
+      }
+      return ''
+    } catch (error) {
+      console.error('Error fetching mentor PAN:', error)
+      return ''
+    }
+  }
+
   getMentorRate(mentorRates: MentorRate[], mentorName: string): number {
     const normalizedMentorName = mentorName.toLowerCase().trim()
     const mentorRate = mentorRates.find(rate => 
@@ -920,7 +960,8 @@ class GoogleSheetsService {
             return actualHeader.toLowerCase().includes(expectedHeader.toLowerCase().split(' ')[0]) // Check first word match
           })
           
-          if (!hasValidStructure) {
+          const isMiscSheet = (sheetTitle || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
+          if (!hasValidStructure && !isMiscSheet) {
             continue
           }
 
@@ -947,8 +988,28 @@ class GoogleSheetsService {
               return Number.isFinite(num) && num > 0 ? num : undefined
             }
 
-            // Find Mentor Rate column dynamically if present
-            const mentorRateIndex = headerRow.findIndex((h: string) => (h || '').toString().trim().toLowerCase() === 'mentor rate')
+            // Find Mentor Rate column dynamically
+            const mentorRateIndex = (() => {
+              const normalizedHeaders = headerRow.map((h: string) => (h || '').toString().trim().toLowerCase())
+              // Be more permissive for Miscellaneous tracker
+              const candidates = isMiscSheet
+                ? ['mentor rate', 'rate', 'mentor base rate', 'payment rate']
+                : ['mentor rate']
+
+              // Exact match first
+              for (const key of candidates) {
+                const idx = normalizedHeaders.findIndex((h: string) => h === key)
+                if (idx >= 0) return idx
+              }
+
+              // Fallback: substring match (handles variations like "Mentor Rate (INR)")
+              for (const key of candidates) {
+                const idx = normalizedHeaders.findIndex((h: string) => h.includes(key))
+                if (idx >= 0) return idx
+              }
+
+              return -1
+            })()
 
 
             const corporateSession: CorporateSessionRecord = {
@@ -971,7 +1032,8 @@ class GoogleSheetsService {
               paymentStatus: row[15] || '', // Column P - Payment Status
               rowIndex: i + 1,
               sheetName: sheetTitle,
-              customRate: (sheetTitle.trim().toLowerCase() === 'miscellaneous tracker' || mentorRateIndex >= 0) ? parseRate(row[mentorRateIndex]) : undefined
+              // Use per-row mentor rate when available; for Miscellaneous tracker this should be present
+              customRate: mentorRateIndex >= 0 ? parseRate(row[mentorRateIndex]) : undefined
             }
 
             allCorporateSessions.push(corporateSession)
@@ -1035,6 +1097,16 @@ class GoogleSheetsService {
       
       // Calculate rates and payouts for corporate sessions
       corporatePayments.forEach(payment => {
+        const isMisc = (payment.sheetName || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
+
+        // For Miscellaneous Tracker: strictly use per-row Mentor Rate (no fallback to rate list)
+        if (isMisc) {
+          const hasValidRowRate = typeof payment.rate === 'number' && isFinite(payment.rate) && payment.rate > 0
+          payment.totalPayout = hasValidRowRate ? (payment.rate * payment.noOfSessions) : 0
+          return
+        }
+
+        // For other corporate sheets: use per-row rate if present, otherwise fallback to mentor rates sheet
         if (typeof payment.rate === 'number' && isFinite(payment.rate) && payment.rate > 0) {
           payment.totalPayout = payment.rate * payment.noOfSessions
         } else {
@@ -1458,6 +1530,273 @@ class GoogleSheetsService {
     }
   }
 
+  async markTDSPaymentsByMentorAsPaid(mentorName: string, paymentIds?: string[]): Promise<boolean> {
+    try {
+      console.log('markTDSPaymentsByMentorAsPaid called with mentor:', mentorName, 'paymentIds:', paymentIds)
+      const mentorCommissionSheetId = process.env.MENTOR_COMMISSION_SHEET_ID
+      if (!mentorCommissionSheetId) {
+        throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
+      }
+
+      // Read until Column P to include the TDS Paid Tag column
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: mentorCommissionSheetId,
+        range: 'Mentor commission!A:P',
+      })
+
+      const rows = response.data.values || []
+      console.log('Total rows in sheet:', rows.length)
+      if (rows.length <= 1) {
+        console.log('No data rows found')
+        return false
+      }
+
+      const normalizedMentorName = mentorName.trim().toLowerCase()
+      const updates: any[] = []
+      
+      // Find all rows for this mentor with TDS data and mark TDS Paid Tag as "Paid"
+      for (let i = 1; i < rows.length; i++) { // Skip header row
+        const row = rows[i]
+        if (!row || row.length < 13) continue // Need at least column M (TDS Paid)
+        
+        const rowMentorName = (row[1] || '').toString().trim().toLowerCase() // Column B is Mentor Name
+        const sNo = row[0] // Column A is S.No
+        const tdsAmountCell = row[12] // Column M: TDS Paid
+        
+        // Check if this row matches the mentor
+        if (rowMentorName !== normalizedMentorName) continue
+        
+        // Check if TDS Paid column has actual data
+        if (!tdsAmountCell || tdsAmountCell === '' || tdsAmountCell === null || tdsAmountCell === undefined) continue
+        
+        const tdsAmount = parseFloat(tdsAmountCell)
+        if (isNaN(tdsAmount) || tdsAmount <= 0) continue
+        
+        // If paymentIds are provided, check if this row is included
+        if (Array.isArray(paymentIds) && paymentIds.length > 0) {
+          const rowId = `tds_${sNo}`
+          if (!paymentIds.includes(rowId)) continue
+        }
+        
+        // Update Column P (index 15) with "Paid" - this is the TDS Paid Tag column
+        updates.push({
+          range: `Mentor commission!P${i + 1}`, // +1 because sheets are 1-indexed
+          values: [['Paid']]
+        })
+        console.log(`Added update for row ${i + 1} - marking Column P as Paid for ${mentorName}`)
+      }
+
+      console.log('Total updates to perform:', updates.length)
+      if (updates.length === 0) {
+        console.log('No matching rows found for mentor:', mentorName)
+        return false
+      }
+
+      await this.sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: mentorCommissionSheetId,
+        resource: {
+          valueInputOption: 'RAW',
+          data: updates,
+        },
+      })
+
+      console.log('Successfully updated', updates.length, 'rows for mentor:', mentorName)
+      return true
+    } catch (error) {
+      console.error('Error marking TDS payments as paid by mentor:', error)
+      throw error
+    }
+  }
+
+  async markTDSPaymentsByDateAsPaid(dateOfPayment: string): Promise<boolean> {
+    try {
+      console.log('markTDSPaymentsByDateAsPaid called with:', dateOfPayment)
+      const mentorCommissionSheetId = process.env.MENTOR_COMMISSION_SHEET_ID
+      if (!mentorCommissionSheetId) {
+        throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
+      }
+
+      // Read until Column P to include the TDS Paid Tag column
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: mentorCommissionSheetId,
+        range: 'Mentor commission!A:P',
+      })
+
+      const rows = response.data.values || []
+      console.log('Total rows in sheet:', rows.length)
+      if (rows.length <= 1) {
+        console.log('No data rows found')
+        return false
+      }
+
+      // Normalize dates to en-IN locale format (DD/MM/YYYY) for consistent comparison
+      const normalizeDate = (dateStr: string): string => {
+        if (!dateStr) return ''
+        const trimmed = dateStr.toString().trim()
+        
+        // Try to parse the date
+        const date = new Date(trimmed)
+        if (isNaN(date.getTime())) {
+          // If parsing fails, return the original string
+          return trimmed
+        }
+        
+        // Format to DD/MM/YYYY using en-IN locale
+        return date.toLocaleDateString('en-IN')
+      }
+
+      const targetDate = normalizeDate((dateOfPayment || '').toString().trim())
+      console.log('Target date (normalized):', targetDate)
+
+      const updates: any[] = []
+
+      for (let i = 1; i < rows.length; i++) { // Skip header row
+        const row = rows[i]
+        if (!row || row.length < 15) continue // Need at least column O (index 14)
+        
+        const rowDateOfPayment = (row[14] || '').toString().trim() // Column O: Date of Payment
+        if (!rowDateOfPayment) continue
+        
+        const normalizedRowDate = normalizeDate(rowDateOfPayment)
+        console.log(`Row ${i + 1}: dateCell="${rowDateOfPayment}", normalized="${normalizedRowDate}", target="${targetDate}"`)
+        
+        if (normalizedRowDate === targetDate) {
+          // Update Column P (index 15) with "Paid" - this is the TDS Paid Tag column
+          updates.push({
+            range: `Mentor commission!P${i + 1}`, // +1 because sheets are 1-indexed
+            values: [['Paid']]
+          })
+          console.log(`Added update for row ${i + 1} - marking Column P as Paid`)
+        }
+      }
+
+      console.log('Total updates to perform:', updates.length)
+      if (updates.length === 0) {
+        console.log('No matching rows found for date:', targetDate)
+        return false
+      }
+
+      await this.sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: mentorCommissionSheetId,
+        resource: {
+          valueInputOption: 'RAW',
+          data: updates,
+        },
+      })
+
+      console.log('Successfully updated', updates.length, 'rows')
+      return true
+    } catch (error) {
+      console.error('Error marking TDS payments as paid by date:', error)
+      throw error
+    }
+  }
+
+  async getTDSPaymentsFromMentorCommissionSheet(): Promise<Array<{
+    sNo: number
+    mentorName: string
+    menteeName: string
+    sessionDate: string
+    sessionStatus: string
+    rate: number
+    paymentStatus: string
+    noOfSessions: number
+    totalPayout: number
+    tdsPercentage: number
+    tdsAmount: number
+    postTdsAmount: number
+    dateOfPayment: string
+  }>> {
+    try {
+      const mentorCommissionSheetId = process.env.MENTOR_COMMISSION_SHEET_ID
+      if (!mentorCommissionSheetId) {
+        throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
+      }
+
+      // Get data from Mentor commission sheet (extended range to include TDS Paid Tag column P)
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: mentorCommissionSheetId,
+        range: 'Mentor commission!A:P', // Columns A to P to include TDS Paid Tag
+      })
+
+      const rows = response.data.values
+      if (!rows || rows.length <= 1) {
+        return []
+      }
+
+      // Skip header row and filter only rows where:
+      // - TDS Paid column (M) has actual data
+      // - Date of Payment column (O) has a valid date
+      // - TDS Paid Tag column (P) is NOT "Paid"
+      const tdsPayments = rows.slice(1)
+        .map((row: any[], index: number) => {
+          if (!row || row.length < 13) return null // Need at least 13 columns to reach column M
+          
+          const tdsAmountCell = row[12] // Column M: TDS Paid (index 12)
+          const dateOfPaymentCell = row[14] // Column O: Date of Payment (index 14)
+          const tdsPaidTagCell = row[15] // Column P: TDS Paid Tag (index 15)
+          
+          // Only include rows where TDS Paid column has actual data (not empty, not zero, not null)
+          if (!tdsAmountCell || tdsAmountCell === '' || tdsAmountCell === null || tdsAmountCell === undefined) {
+            return null
+          }
+          
+          const tdsAmount = parseFloat(tdsAmountCell)
+          
+          // Also check if the parsed TDS amount is a valid positive number
+          if (isNaN(tdsAmount) || tdsAmount <= 0) return null
+
+          // Require a valid Date of Payment
+          const dateString = (dateOfPaymentCell || '').toString().trim()
+          if (!dateString) return null
+          const parsedDate = new Date(dateString)
+          if (isNaN(parsedDate.getTime())) return null
+
+          // Exclude rows where TDS Paid Tag is "Paid"
+          const tdsPaidTag = (tdsPaidTagCell || '').toString().trim().toLowerCase()
+          if (tdsPaidTag === 'paid') {
+            return null
+          }
+
+          return {
+            sNo: parseInt(row[0]) || (index + 1),
+            mentorName: row[1]?.toString() || '',
+            menteeName: row[2]?.toString() || '',
+            sessionDate: row[3]?.toString() || '',
+            sessionStatus: row[4]?.toString() || '',
+            rate: parseFloat(row[5]) || 0,
+            paymentStatus: row[6]?.toString() || 'Paid',
+            noOfSessions: parseInt(row[7]) || 0,
+            totalPayout: parseFloat(row[8]) || 0,
+            tdsPercentage: parseFloat(row[11]) || 0.10, // Column L: TDS %
+            tdsAmount: tdsAmount, // Column M: TDS Paid
+            postTdsAmount: parseFloat(row[13]) || 0, // Column N: Post TDS
+            dateOfPayment: dateString // Column O: Date of Payment
+          }
+        })
+        .filter((payment: any): payment is {
+          sNo: number;
+          mentorName: string;
+          menteeName: string;
+          sessionDate: string;
+          sessionStatus: string;
+          rate: number;
+          paymentStatus: string;
+          noOfSessions: number;
+          totalPayout: number;
+          tdsPercentage: number;
+          tdsAmount: number;
+          postTdsAmount: number;
+          dateOfPayment: string;
+        } => payment !== null)
+
+      return tdsPayments
+    } catch (error) {
+      console.error('Error fetching TDS payments from Mentor Commission sheet:', error)
+      return []
+    }
+  }
+
   async aggregatePaymentsByMentor(payments: PaymentRecord[]) {
     try {
       // Group payments by mentor
@@ -1525,6 +1864,136 @@ class GoogleSheetsService {
       return result
     } catch (error) {
       console.error('Error aggregating payments by mentor:', error)
+      throw error
+    }
+  }
+
+  async uploadInvoiceToDrive(pdfBuffer: Buffer, fileName: string): Promise<string> {
+    try {
+      const folderId = process.env.GOOGLE_DRIVE_INVOICE_FOLDER_ID
+      if (!folderId) {
+        throw new Error('GOOGLE_DRIVE_INVOICE_FOLDER_ID is not configured')
+      }
+
+      // Upload the file with Shared Drive support
+      const fileMetadata = {
+        name: fileName,
+        parents: [folderId]
+      }
+
+      const media = {
+        mimeType: 'application/pdf',
+        body: require('stream').Readable.from(pdfBuffer)
+      }
+
+      const file = await this.drive.files.create({
+        requestBody: fileMetadata,
+        media: media,
+        fields: 'id, webViewLink',
+        supportsAllDrives: true // Enable Shared Drive support
+      })
+
+      // Make the file publicly accessible (with Shared Drive support)
+      await this.drive.permissions.create({
+        fileId: file.data.id,
+        requestBody: {
+          role: 'reader',
+          type: 'anyone'
+        },
+        supportsAllDrives: true // Enable Shared Drive support
+      })
+
+      console.log('Invoice uploaded to Drive:', file.data.webViewLink)
+      return file.data.webViewLink
+    } catch (error) {
+      console.error('Error uploading invoice to Drive:', error)
+      throw error
+    }
+  }
+
+  async getVendorInvoiceCountForMentor(mentorName: string): Promise<number> {
+    try {
+      const mentorCommissionSheetId = process.env.MENTOR_COMMISSION_SHEET_ID
+      if (!mentorCommissionSheetId) {
+        throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
+      }
+
+      // Get existing data from Vendor Payments tab
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: mentorCommissionSheetId,
+        range: 'Vendor Payments!A:J'
+      })
+
+      const rows = response.data.values || []
+      if (rows.length <= 1) return 0 // Only header or no data
+
+      // Count invoices for this mentor (column B is Vendor Name)
+      const normalizedMentorName = mentorName.toLowerCase().trim()
+      const count = rows.slice(1).filter((row: any) => {
+        const vendorName = (row[1] || '').toString().toLowerCase().trim()
+        return vendorName === normalizedMentorName
+      }).length
+
+      return count
+    } catch (error) {
+      console.error('Error getting invoice count for mentor:', error)
+      return 0
+    }
+  }
+
+  async addVendorPaymentRecord(data: {
+    vendorName: string
+    vendorPAN: string
+    paymentDate: string
+    totalAmount: number
+    tdsPercentage: number
+    tdsAmount: number
+    finalAmountPaid: number
+    tdsPaid: number
+    invoiceLink: string
+  }): Promise<void> {
+    try {
+      const mentorCommissionSheetId = process.env.MENTOR_COMMISSION_SHEET_ID
+      if (!mentorCommissionSheetId) {
+        throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
+      }
+
+      // Get existing data from Vendor Payments tab to determine next Sr No
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: mentorCommissionSheetId,
+        range: 'Vendor Payments!A:J'
+      })
+
+      const rows = response.data.values || []
+      const nextSrNo = rows.length // Including header, so this will be the next row number
+
+      // Prepare the new row data
+      const newRow = [
+        nextSrNo, // Sr No
+        data.vendorName,
+        data.vendorPAN,
+        data.paymentDate,
+        data.totalAmount,
+        data.tdsPercentage,
+        data.tdsAmount,
+        data.finalAmountPaid,
+        data.tdsPaid,
+        data.invoiceLink
+      ]
+
+      // Append the new row
+      await this.sheets.spreadsheets.values.append({
+        spreadsheetId: mentorCommissionSheetId,
+        range: 'Vendor Payments!A:J',
+        valueInputOption: 'RAW',
+        resource: {
+          values: [newRow]
+        }
+      })
+
+      console.log('Vendor payment record added successfully:', data.vendorName)
+    } catch (error) {
+      console.error('Error adding vendor payment record:', error)
       throw error
     }
   }

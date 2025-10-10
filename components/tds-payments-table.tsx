@@ -1,0 +1,388 @@
+"use client"
+
+import { useState } from 'react'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Check, ChevronDown, ChevronRight } from 'lucide-react'
+
+type TDSPayment = {
+  sNo: number
+  mentorName: string
+  menteeName: string
+  sessionDate: string
+  sessionStatus: string
+  rate: number
+  paymentStatus: string
+  noOfSessions: number
+  totalPayout: number
+  tdsPercentage: number
+  tdsAmount: number
+  postTdsAmount: number
+  dateOfPayment: string
+}
+
+interface TdsPaymentsTableProps {
+  tdsPayments: TDSPayment[]
+  loading?: boolean
+  onMarkMentorPaid?: (mentorName: string, paymentIds: string[]) => Promise<void> | void
+}
+
+interface DateTDSData {
+  date: string
+  totalTDS: number
+  mentors: Array<{
+    mentorName: string
+    totalTDS: number
+    payments: TDSPayment[]
+  }>
+  allPayments: TDSPayment[]
+}
+
+export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPaid }: TdsPaymentsTableProps) {
+  const formatter = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' })
+  const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set())
+  const [processing, setProcessing] = useState(false)
+  const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set())
+
+  // Normalize date for consistent grouping
+  const normalizeDateKey = (dateStr: string): string => {
+    if (!dateStr) return ''
+    try {
+      const date = new Date(dateStr)
+      if (isNaN(date.getTime())) return dateStr
+      return date.toLocaleDateString('en-IN')
+    } catch {
+      return dateStr
+    }
+  }
+
+  // Group by Date of Payment, then by Mentor
+  const groupByDate = (payments: TDSPayment[]): DateTDSData[] => {
+    const dateGroups = payments.reduce((acc, payment) => {
+      const dateKey = normalizeDateKey(payment.dateOfPayment)
+      if (!acc[dateKey]) {
+        acc[dateKey] = []
+      }
+      acc[dateKey].push(payment)
+      return acc
+    }, {} as Record<string, TDSPayment[]>)
+
+    return Object.entries(dateGroups).map(([date, datePayments]) => {
+      // Group by mentor within this date
+      const mentorGroups = datePayments.reduce((acc, payment) => {
+        const mentorName = payment.mentorName
+        if (!acc[mentorName]) {
+          acc[mentorName] = []
+        }
+        acc[mentorName].push(payment)
+        return acc
+      }, {} as Record<string, TDSPayment[]>)
+
+      const mentors = Object.entries(mentorGroups).map(([mentorName, mentorPayments]) => ({
+        mentorName,
+        totalTDS: mentorPayments.reduce((sum, p) => sum + (p.tdsAmount || 0), 0),
+        payments: mentorPayments.sort((a, b) => {
+          const dateA = new Date(a.sessionDate).getTime()
+          const dateB = new Date(b.sessionDate).getTime()
+          return isNaN(dateA) || isNaN(dateB) ? 0 : dateA - dateB
+        })
+      })).sort((a, b) => a.mentorName.localeCompare(b.mentorName))
+
+      const totalTDS = datePayments.reduce((sum, p) => sum + (p.tdsAmount || 0), 0)
+
+      return {
+        date,
+        totalTDS,
+        mentors,
+        allPayments: datePayments
+      }
+    }).sort((a, b) => {
+      const dateA = new Date(a.date).getTime()
+      const dateB = new Date(b.date).getTime()
+      return isNaN(dateA) || isNaN(dateB) ? 0 : dateA - dateB
+    })
+  }
+
+  const dateData = groupByDate(tdsPayments || [])
+  const totalTDS = dateData.reduce((sum, d) => sum + d.totalTDS, 0)
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedDates(new Set(dateData.map(d => d.date)))
+    } else {
+      setSelectedDates(new Set())
+    }
+  }
+
+  const handleSelectDate = (date: string, checked: boolean) => {
+    const newSelected = new Set(selectedDates)
+    if (checked) {
+      newSelected.add(date)
+    } else {
+      newSelected.delete(date)
+    }
+    setSelectedDates(newSelected)
+  }
+
+  const handleMarkSelectedAsPaid = async () => {
+    if (selectedDates.size === 0 || !onMarkMentorPaid) return
+    
+    setProcessing(true)
+    try {
+      for (const date of Array.from(selectedDates)) {
+        const dateGroup = dateData.find(d => d.date === date)
+        if (dateGroup) {
+          // Mark each mentor's TDS as paid for this date
+          for (const mentor of dateGroup.mentors) {
+            const paymentIds = mentor.payments.map(p => `tds_${p.sNo}`)
+            await onMarkMentorPaid(mentor.mentorName, paymentIds)
+          }
+        }
+      }
+      setSelectedDates(new Set())
+    } catch (error) {
+      console.error('Error marking TDS payments as paid:', error)
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  const handleMarkIndividualDateAsPaid = async (date: string) => {
+    if (!onMarkMentorPaid) return
+    
+    setProcessing(true)
+    try {
+      const dateGroup = dateData.find(d => d.date === date)
+      if (dateGroup) {
+        // Mark each mentor's TDS as paid for this date
+        for (const mentor of dateGroup.mentors) {
+          const paymentIds = mentor.payments.map(p => `tds_${p.sNo}`)
+          await onMarkMentorPaid(mentor.mentorName, paymentIds)
+        }
+      }
+    } catch (error) {
+      console.error('Error marking TDS payment as paid:', error)
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  const toggleDateExpansion = (date: string) => {
+    const newExpanded = new Set(expandedDates)
+    if (newExpanded.has(date)) {
+      newExpanded.delete(date)
+    } else {
+      newExpanded.add(date)
+    }
+    setExpandedDates(newExpanded)
+  }
+
+  return (
+    <div className="space-y-4">
+      {loading && (
+        <div className="flex items-center justify-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      )}
+      
+      {!loading && dateData.length === 0 && (
+        <div className="text-center py-8">
+          <div className="mx-auto w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mb-4">
+            <Check className="w-12 h-12 text-green-600" />
+          </div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">All caught up!</h3>
+          <p className="text-gray-500">No TDS payments pending.</p>
+        </div>
+      )}
+
+      {!loading && dateData.length > 0 && (
+        <>
+          {/* Actions Bar */}
+          <div className="flex justify-between items-center">
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                checked={selectedDates.size === dateData.length && dateData.length > 0}
+                onChange={(e) => handleSelectAll(e.target.checked)}
+                className="rounded border-gray-300 text-primary focus:ring-primary"
+              />
+              <span className="text-sm text-gray-600">
+                {selectedDates.size > 0 
+                  ? `${selectedDates.size} date(s) selected`
+                  : `Select all (${dateData.length} dates)`
+                }
+              </span>
+            </div>
+            
+            {selectedDates.size > 0 && onMarkMentorPaid && (
+              <Button
+                onClick={handleMarkSelectedAsPaid}
+                disabled={processing}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                <Check className="w-4 h-4 mr-2" />
+                Mark Selected as Paid ({selectedDates.size})
+              </Button>
+            )}
+          </div>
+
+          {/* Summary Stats */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-sm text-gray-500">Total Payment Dates</div>
+                <div className="text-2xl font-bold text-gray-900">{dateData.length}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="text-sm text-gray-500">Total TDS Amount</div>
+                <div className="text-2xl font-bold text-red-600">{formatter.format(totalTDS)}</div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Dates Table */}
+          <div className="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
+            <table className="min-w-full divide-y divide-gray-300">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
+                    <input
+                      type="checkbox"
+                      checked={selectedDates.size === dateData.length && dateData.length > 0}
+                      onChange={(e) => handleSelectAll(e.target.checked)}
+                      className="rounded border-gray-300 text-primary focus:ring-primary"
+                    />
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Payment Date
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Mentors
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Payments
+                  </th>
+                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Total TDS
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {dateData.map((dateGroup) => (
+                  <>
+                    <tr key={dateGroup.date} className="hover:bg-gray-50">
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        <input
+                          type="checkbox"
+                          checked={selectedDates.has(dateGroup.date)}
+                          onChange={(e) => handleSelectDate(dateGroup.date, e.target.checked)}
+                          className="rounded border-gray-300 text-primary focus:ring-primary"
+                        />
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <button
+                            onClick={() => toggleDateExpansion(dateGroup.date)}
+                            className="mr-2 p-1 hover:bg-gray-100 rounded"
+                          >
+                            {expandedDates.has(dateGroup.date) ? (
+                              <ChevronDown className="w-4 h-4" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4" />
+                            )}
+                          </button>
+                          <div className="text-sm font-medium text-gray-900">{dateGroup.date}</div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900 text-center">
+                        {dateGroup.mentors.length}
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900 text-center">
+                        {dateGroup.allPayments.length}
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap text-right">
+                        <div className="text-sm font-bold text-red-600">
+                          {formatter.format(dateGroup.totalTDS)}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={processing}
+                          onClick={() => handleMarkIndividualDateAsPaid(dateGroup.date)}
+                          className="bg-green-600 text-white border-green-600 hover:bg-green-700 text-xs px-2 py-1"
+                        >
+                          <Check className="w-3 h-3 mr-1" />
+                          Mark Paid
+                        </Button>
+                      </td>
+                    </tr>
+                    
+                    {/* Expanded Details */}
+                    {expandedDates.has(dateGroup.date) && (
+                      <tr>
+                        <td colSpan={6} className="px-6 py-4 bg-gray-50">
+                          <div className="space-y-4">
+                            <h4 className="text-sm font-medium text-gray-900 mb-2">TDS Breakdown by Mentor</h4>
+                            
+                            {/* Mentor Summary */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                              {dateGroup.mentors.map((mentor) => (
+                                <div key={mentor.mentorName} className="bg-white p-3 rounded border">
+                                  <div className="text-sm font-medium text-gray-900">{mentor.mentorName}</div>
+                                  <div className="text-xs text-gray-500">{mentor.payments.length} sessions</div>
+                                  <div className="text-sm font-bold text-red-600 mt-1">{formatter.format(mentor.totalTDS)}</div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Detailed Session Table */}
+                            <h4 className="text-sm font-medium text-gray-900 mb-2">Session Details</h4>
+                            <div className="overflow-x-auto">
+                              <table className="min-w-full divide-y divide-gray-200">
+                                <thead className="bg-gray-100">
+                                  <tr>
+                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Mentor</th>
+                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Mentee</th>
+                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Session Date</th>
+                                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Total Payout</th>
+                                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">TDS Amount</th>
+                                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Post-TDS</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                  {dateGroup.allPayments.map((payment) => (
+                                    <tr key={payment.sNo}>
+                                      <td className="px-3 py-2 text-xs text-gray-900">{payment.mentorName}</td>
+                                      <td className="px-3 py-2 text-xs text-gray-900">{payment.menteeName}</td>
+                                      <td className="px-3 py-2 text-xs text-gray-900">{payment.sessionDate}</td>
+                                      <td className="px-3 py-2 text-xs text-right text-gray-900">{formatter.format(payment.totalPayout)}</td>
+                                      <td className="px-3 py-2 text-xs text-right text-red-600">{formatter.format(payment.tdsAmount)}</td>
+                                      <td className="px-3 py-2 text-xs text-right text-green-600">{formatter.format(payment.postTdsAmount)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+

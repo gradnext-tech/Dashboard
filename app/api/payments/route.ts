@@ -1,6 +1,194 @@
 import { NextRequest, NextResponse } from 'next/server'
+// Ensure this route is always dynamic and never cached
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
 import { googleSheetsService } from '@/lib/google-sheets'
+import PDFDocument from 'pdfkit'
 import nodemailer from 'nodemailer'
+import fs from 'fs'
+import path from 'path'
+
+type InvoiceItem = { date: string; menteeName: string; sessions: number; payout: number }
+
+// Function to ensure font files exist before PDFKit initialization
+function ensureFontFilesExist() {
+  const fontDir = path.join(process.cwd(), '.next', 'server', 'vendor-chunks', 'data')
+  const requiredFonts = ['Helvetica.afm', 'Courier.afm', 'Times-Roman.afm']
+  
+  // Create directory if it doesn't exist
+  if (!fs.existsSync(fontDir)) {
+    fs.mkdirSync(fontDir, { recursive: true })
+  }
+  
+  // Check if required fonts exist, if not create minimal dummy files
+  requiredFonts.forEach(fontFile => {
+    const fontPath = path.join(fontDir, fontFile)
+    if (!fs.existsSync(fontPath)) {
+      // Create a minimal AFM file that PDFKit can read
+      const minimalAfm = `StartFontMetrics 4.1
+FontName ${fontFile.replace('.afm', '')}
+FullName ${fontFile.replace('.afm', '')}
+FamilyName ${fontFile.replace('.afm', '')}
+Weight Medium
+ItalicAngle 0
+IsFixedPitch false
+FontBBox -168 -218 1000 898
+UnderlinePosition -100
+UnderlineThickness 50
+Version 003.000
+Notice Copyright (c) 1985, 1987, 1989, 1990, 1997 Adobe Systems Incorporated.  All Rights Reserved.
+EncodingScheme AdobeStandardEncoding
+CapHeight 662
+XHeight 450
+Ascender 683
+Descender -217
+StdHW 28
+StdVW 88
+StartCharMetrics 315
+C 32 ; WX 278 ; N space ; B 0 0 0 0 ;
+EndCharMetrics
+StartKernPairs 0
+EndKernPairs
+EndFontMetrics`
+      
+      try {
+        fs.writeFileSync(fontPath, minimalAfm)
+        console.log(`Created minimal font file: ${fontFile}`)
+      } catch (error) {
+        console.warn(`Failed to create font file ${fontFile}:`, error)
+      }
+    }
+  })
+}
+
+async function generateStyledInvoicePDF(params: {
+  invoiceNumber: string
+  mentorName: string
+  pan: string
+  totalSessions: number
+  ratePerSession: number
+  totalAmount: number
+  dateOfPayment: string
+}): Promise<Buffer> {
+  const { invoiceNumber, mentorName, pan, totalSessions, ratePerSession, totalAmount, dateOfPayment } = params
+  
+  // Ensure font files exist before PDFKit initialization
+  ensureFontFilesExist()
+  
+  // Configure PDFDocument with proper margins for A4 page
+  const doc = new PDFDocument({ 
+    size: 'A4',
+    margins: {
+      top: 50,
+      bottom: 50,
+      left: 50,
+      right: 50
+    }
+  })
+  
+  const buffers: Buffer[] = []
+  doc.on('data', (b: Buffer) => buffers.push(b))
+
+  // Page dimensions (A4: 595 x 842 points)
+  const pageWidth = 595
+  const leftMargin = 50
+  const rightMargin = 50
+  const contentWidth = pageWidth - leftMargin - rightMargin // 495 points
+
+  // Colors
+  const darkText = '#1f2937'
+  const grayText = '#6b7280'
+  const lightBg = '#f9fafb'
+  const blueAccent = '#3b82f6'
+
+  // ===== HEADER SECTION =====
+  // Title - "Invoice" (perfectly centered at top)
+  const centerX = leftMargin + (contentWidth / 2)
+  doc.fontSize(36).fillColor(darkText).text('Invoice', centerX, 60, { 
+    align: 'center' 
+  })
+
+  // ===== BILLED BY & BILLED TO SECTION =====
+  const sectionTop = 140
+  
+  // Billed By (left column)
+  doc.fontSize(11).fillColor(darkText).text('Billed By', leftMargin, sectionTop)
+  doc.fontSize(12).fillColor(darkText).text('Kashish Malhotra', leftMargin, sectionTop + 22)
+  doc.fontSize(9).fillColor(grayText)
+  doc.text('1-B Shastri Colony Ambala Cantt,', leftMargin, sectionTop + 40)
+  doc.text('Ambala Cantt, India - 133001', leftMargin, sectionTop + 54)
+  doc.text('Phone: +91 82228 66630', leftMargin, sectionTop + 68)
+
+  // Billed To (middle column)
+  const middleColX = 250
+  doc.fontSize(11).fillColor(darkText).text('Billed To', middleColX, sectionTop)
+  doc.fontSize(12).fillColor(darkText).text(mentorName, middleColX, sectionTop + 22, { width: 200 })
+  doc.fontSize(9).fillColor(grayText).text(`PAN: ${pan || 'N/A'}`, middleColX, sectionTop + 40)
+
+  // Invoice Details (right column)
+  const rightColX = 450
+  doc.fontSize(11).fillColor(darkText).text('Invoice Details', rightColX, sectionTop)
+  
+  doc.fontSize(9).fillColor(grayText).text('Invoice No #', rightColX, sectionTop + 22)
+  doc.fillColor(darkText).text(invoiceNumber, rightColX + 80, sectionTop + 22)
+  
+  doc.fillColor(grayText).text('Invoice Date', rightColX, sectionTop + 38)
+  doc.fillColor(darkText).text(dateOfPayment, rightColX + 80, sectionTop + 38)
+
+  // ===== TABLE SECTION =====
+  const tableTop = 250
+  const tableWidth = contentWidth
+  
+  // Table header background
+  doc.rect(leftMargin, tableTop, tableWidth, 30).fill(lightBg)
+  
+  // Table column positions - shifted left for better visibility
+  const col1X = leftMargin + 15       // Item
+  const col2X = leftMargin + 200      // Quantity (moved left by 50px)
+  const col3X = leftMargin + 280      // Rate (moved left by 50px)
+  const col4X = leftMargin + 360      // Amount (moved left by 60px)
+  
+  // Table headers
+  doc.fontSize(10).fillColor(grayText)
+  doc.text('Item', col1X, tableTop + 10)
+  doc.text('Quantity', col2X, tableTop + 10, { width: 70, align: 'center' })
+  doc.text('Rate', col3X, tableTop + 10, { width: 80, align: 'right' })
+  doc.text('Amount', col4X, tableTop + 10, { width: 100, align: 'right' })
+
+  // Table row - Vendor payments
+  const rowTop = tableTop + 42
+  doc.fontSize(10).fillColor(darkText)
+  doc.text('Vendor payments', col1X, rowTop)
+  doc.text(totalSessions.toString(), col2X, rowTop, { width: 70, align: 'center' })
+  
+  // Format amounts with rupee symbol
+  const formattedRate = `₹${ratePerSession.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const formattedAmount = `₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  
+  doc.text(formattedRate, col3X, rowTop, { width: 80, align: 'right' })
+  doc.text(formattedAmount, col4X, rowTop, { width: 100, align: 'right' })
+
+  // ===== REDUCTIONS & TOTAL SECTION =====
+  const summaryTop = rowTop + 50
+  
+  // Reductions row
+  doc.fontSize(10).fillColor(grayText)
+  doc.text('Reductions', col3X, summaryTop, { width: 80, align: 'right' })
+  doc.fillColor(darkText).text('₹0.00', col4X, summaryTop, { width: 100, align: 'right' })
+
+  // Total section with white background and dark font
+  const totalBoxTop = summaryTop + 30
+  
+  // Total label and amount - dark font on white background
+  doc.fontSize(12).fillColor(darkText)
+  doc.text('Total (INR)', col3X, totalBoxTop + 12, { width: 80, align: 'right' })
+  
+  const formattedTotal = `₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  doc.fontSize(14).text(formattedTotal, col4X, totalBoxTop + 10, { width: 100, align: 'right' })
+
+  doc.end()
+  return await new Promise<Buffer>((resolve) => doc.on('end', () => resolve(Buffer.concat(buffers))))
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -26,6 +214,11 @@ export async function GET(request: NextRequest) {
     if (type === 'final-payments') {
       const finalPayments = await googleSheetsService.getFinalPaymentsFromMentorCommissionSheet()
       return NextResponse.json({ finalPayments })
+    }
+
+    if (type === 'tds-payments') {
+      const tdsPayments = await googleSheetsService.getTDSPaymentsFromMentorCommissionSheet()
+      return NextResponse.json({ tdsPayments })
     }
 
     if (type === 'pending') {
@@ -58,7 +251,50 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { action, paymentIds, mentorName } = body
+    const { action, paymentIds, mentorName, dateOfPayment } = body
+    if (action === 'markTdsByMentorPaid') {
+      const { mentorName, paymentIds } = body
+      
+      if (!mentorName || typeof mentorName !== 'string') {
+        return NextResponse.json(
+          { error: 'mentorName is required' },
+          { status: 400 }
+        )
+      }
+
+      try {
+        const result = await googleSheetsService.markTDSPaymentsByMentorAsPaid(mentorName, paymentIds)
+        return NextResponse.json({ success: true, result })
+      } catch (error) {
+        console.error('Error marking TDS payments by mentor as paid:', error)
+        return NextResponse.json(
+          { error: error instanceof Error ? error.message : 'Failed to mark TDS as paid' },
+          { status: 500 }
+        )
+      }
+    }
+
+    if (action === 'markTdsDatePaid') {
+      console.log('markTdsDatePaid action called with dateOfPayment:', dateOfPayment)
+      if (!dateOfPayment || typeof dateOfPayment !== 'string') {
+        console.error('Invalid dateOfPayment:', dateOfPayment)
+        return NextResponse.json(
+          { error: 'dateOfPayment is required' },
+          { status: 400 }
+        )
+      }
+      try {
+        const result = await googleSheetsService.markTDSPaymentsByDateAsPaid(dateOfPayment)
+        console.log('markTDSPaymentsByDateAsPaid result:', result)
+        return NextResponse.json({ success: true, result })
+      } catch (error) {
+        console.error('Error in markTDSPaymentsByDateAsPaid:', error)
+        return NextResponse.json(
+          { error: error instanceof Error ? error.message : 'Failed to mark TDS as paid' },
+          { status: 500 }
+        )
+      }
+    }
 
     if (action === 'markPaid') {
       if (!paymentIds || !Array.isArray(paymentIds)) {
@@ -172,6 +408,104 @@ export async function POST(request: NextRequest) {
         )
       }
 
+      // Fetch final payments (Due) to gather details for email/pdf
+      const finalPayments = await googleSheetsService.getFinalPaymentsFromMentorCommissionSheet()
+      const selected = finalPayments.filter(fp => paymentIds.includes(`final_${fp.sNo}`))
+
+      // Group by mentor to send emails
+      const paymentsByMentor = new Map<string, typeof selected>()
+      selected.forEach(fp => {
+        const key = fp.mentorName.toLowerCase().trim()
+        const arr = paymentsByMentor.get(key) || []
+        arr.push(fp)
+        paymentsByMentor.set(key, arr)
+      })
+
+      // Setup mail transport
+      const host = process.env.SMTP_HOST
+      const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 587
+      const user = process.env.SMTP_USER
+      const pass = process.env.SMTP_PASS
+      const from = process.env.FROM_EMAIL || 'no-reply@gradnext.com'
+      const financeTo = 'finance@gradnext.co'
+
+      const transporter = (host && user && pass) ? nodemailer.createTransport({ host, port, secure: port === 465, auth: { user, pass } }) : null
+      
+      console.log('Email config check:', { host: !!host, user: !!user, pass: !!pass, transporter: !!transporter })
+
+      // Send mentor emails and finance invoice emails (best-effort, non-blocking failure)
+      if (transporter) {
+        console.log('Processing', paymentsByMentor.size, 'mentors for emails')
+        for (const [key, items] of Array.from(paymentsByMentor.entries())) {
+          const mentorName = (items as any[])[0].mentorName
+          const mentorDetailList = await googleSheetsService.getMentorDetails()
+          const mentorDetail = mentorDetailList.find(d => d.mentorName.toLowerCase().trim() === key)
+          const mentorEmail = mentorDetail?.email || ''
+
+          const totalPayout = (items as any[]).reduce((sum: number, p: any) => sum + (p.totalPayout || 0), 0)
+          const TDS_RATE = 0.10
+          const tdsAmount = totalPayout * TDS_RATE
+          const postTds = totalPayout - tdsAmount
+
+          // Build session table HTML
+          const sessionRows = (items as any[]).map((p: any) => `<tr><td>${p.sessionDate}</td><td>${p.menteeName}</td><td>${p.noOfSessions}</td><td>${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(p.totalPayout)}</td></tr>`).join('')
+          const subject = `Payout Paid - ${mentorName}`
+          const text = `Hi ${mentorName},\n\nYour payout has been paid.\n\nTotal Sessions: ${(items as any[]).length}\nTotal Amount (Pre-TDS): ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(totalPayout)}\nTDS (10%): ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(tdsAmount)}\nAmount Credited (Post-TDS): ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(postTds)}\n\nSession-wise Breakdown:\n${(items as any[]).map((p: any) => `  ${p.sessionDate} - ${p.menteeName}: ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(p.totalPayout)}`).join('\n')}\n\nBest,\nGradNext`
+          const html = `<p>Hi ${mentorName},</p><p>Your payout has been paid.</p><p><strong>Total Sessions:</strong> ${items.length}</p><p><strong>Total Amount (Pre-TDS):</strong> ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(totalPayout)}</p><p><strong>TDS (10%):</strong> ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(tdsAmount)}</p><p><strong>Amount Credited (Post-TDS):</strong> ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(postTds)}</p><h3>Session-wise Breakdown:</h3><table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse;"><thead><tr><th>Date</th><th>Mentee</th><th>Sessions</th><th>Payout</th></tr></thead><tbody>${sessionRows}</tbody></table><p>Best,<br/>gradnext</p>`
+
+          if (mentorEmail) {
+            try { 
+              console.log(`Sending mentor email to ${mentorEmail}`)
+              await transporter.sendMail({ from, to: mentorEmail, subject, text, html })
+              console.log(`Mentor email sent successfully to ${mentorEmail}`)
+            } catch (error) {
+              console.error(`Failed to send mentor email to ${mentorEmail}:`, error)
+            }
+          } else {
+            console.log(`No email found for mentor ${mentorName}`)
+          }
+
+          // Finance invoice email (text/html)
+          try {
+            console.log(`Generating PDF and sending finance email for ${mentorName}`)
+            const pan = await googleSheetsService.getMentorPAN(mentorName)
+            
+            // Calculate totals for invoice
+            const totalSessions = (items as any[]).reduce((sum: number, p: any) => sum + (p.noOfSessions || 0), 0)
+            const ratePerSession = totalSessions > 0 ? totalPayout / totalSessions : 0
+            const paymentDate = new Date().toLocaleDateString('en-IN')
+            
+            // Generate invoice number
+            const invoiceCount = await googleSheetsService.getVendorInvoiceCountForMentor(mentorName)
+            const nameParts = mentorName.trim().split(/\s+/)
+            const firstInitial = nameParts[0]?.charAt(0).toUpperCase() || 'X'
+            const lastInitial = nameParts[nameParts.length - 1]?.charAt(0).toUpperCase() || 'X'
+            const invoiceNumber = `${firstInitial}${lastInitial}-${String(invoiceCount + 1).padStart(3, '0')}`
+            
+            const invoiceBuffer = await generateStyledInvoicePDF({
+              invoiceNumber,
+              mentorName,
+              pan,
+              totalSessions,
+              ratePerSession,
+              totalAmount: totalPayout,
+              dateOfPayment: paymentDate
+            })
+            await transporter.sendMail({
+              from,
+              to: financeTo,
+              subject: `Invoice - ${mentorName}`,
+              text: `Payout processed for ${mentorName}. Total Due (Pre-TDS): ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(totalPayout)}. PAN: ${pan || 'N/A'}.`,
+              attachments: [{ filename: `Invoice_${invoiceNumber}_${mentorName.replace(/\s+/g,'_')}.pdf`, content: invoiceBuffer }]
+            })
+            console.log(`Finance email sent successfully for ${mentorName}`)
+          } catch (error) {
+            console.error(`Failed to send finance email for ${mentorName}:`, error)
+          }
+        }
+      }
+
+      // Finally, mark as paid
       await googleSheetsService.markFinalPaymentsAsPaid(paymentIds)
       return NextResponse.json({ success: true })
     }
@@ -311,7 +645,7 @@ export async function POST(request: NextRequest) {
           pendingPaymentsText +
           `We will process the payout after confirmation.\n\n` +
           `If you have any discrepancies, contact +91 8320447769\n\n` +
-          `Best,\nGradNext`
+          `Best,\ngradnext`
         
         // Create session-wise breakdown HTML
         const sessionBreakdownHtml = (entry.sessionsBreakdown || []).map((s: any) => 
@@ -380,27 +714,10 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    if (action === 'markFinalPaymentsPaid') {
-      const { paymentIds } = body
-      
-      if (!paymentIds || !Array.isArray(paymentIds) || paymentIds.length === 0) {
-        return NextResponse.json(
-          { error: 'paymentIds array is required' },
-          { status: 400 }
-        )
-      }
-
-      // Mark final payments as paid in the Mentor Commission sheet
-      await googleSheetsService.markFinalPaymentsAsPaid(paymentIds)
-
-      return NextResponse.json({ 
-        success: true, 
-        message: `Successfully marked ${paymentIds.length} final payments as paid` 
-      })
-    }
+    // Removed duplicate markFinalPaymentsPaid handler - using the one above with email logic
 
     if (action === 'markFinalPaymentsByMentorPaid') {
-      const { mentorName } = body
+      const { mentorName, paymentIds } = body
       
       if (!mentorName || typeof mentorName !== 'string') {
         return NextResponse.json(
@@ -409,12 +726,119 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      // Mark all final payments for this mentor as paid in the Mentor Commission sheet
-      await googleSheetsService.markFinalPaymentsByMentorAsPaid(mentorName)
+      // Build selection: fetch current due final payments and filter by mentor/paymentIds
+      const finalPayments = await googleSheetsService.getFinalPaymentsFromMentorCommissionSheet()
+      const selected = finalPayments.filter(fp => {
+        const byMentor = fp.mentorName.toLowerCase().trim() === mentorName.toLowerCase().trim()
+        const byIds = Array.isArray(paymentIds) && paymentIds.length > 0 ? paymentIds.includes(`final_${fp.sNo}`) : true
+        return byMentor && byIds
+      })
+
+      if (selected.length === 0) {
+        return NextResponse.json({ 
+          error: 'No payments found for the specified mentor' 
+        }, { status: 404 })
+      }
+
+      // Calculate totals
+      const totalPayout = selected.reduce((sum, p) => sum + (p.totalPayout || 0), 0)
+      const totalSessions = selected.reduce((sum, p) => sum + (p.noOfSessions || 0), 0)
+      const ratePerSession = totalSessions > 0 ? totalPayout / totalSessions : 0
+      const TDS_RATE = 0.10
+      const tdsAmount = totalPayout * TDS_RATE
+      const postTds = totalPayout - tdsAmount
+      const paymentDate = new Date().toLocaleDateString('en-IN')
+
+      // Get mentor PAN
+      const pan = await googleSheetsService.getMentorPAN(mentorName)
+
+      // Generate invoice number based on mentor initials
+      const invoiceCount = await googleSheetsService.getVendorInvoiceCountForMentor(mentorName)
+      const nameParts = mentorName.trim().split(/\s+/)
+      const firstInitial = nameParts[0]?.charAt(0).toUpperCase() || 'X'
+      const lastInitial = nameParts[nameParts.length - 1]?.charAt(0).toUpperCase() || 'X'
+      const invoiceNumber = `${firstInitial}${lastInitial}-${String(invoiceCount + 1).padStart(3, '0')}`
+
+      // Generate invoice PDF
+      console.log(`Generating invoice PDF for ${mentorName} with invoice number ${invoiceNumber}`)
+      const invoiceBuffer = await generateStyledInvoicePDF({
+        invoiceNumber,
+        mentorName,
+        pan,
+        totalSessions,
+        ratePerSession,
+        totalAmount: totalPayout,
+        dateOfPayment: paymentDate
+      })
+
+      // Upload invoice to Google Drive
+      const fileName = `Invoice_${invoiceNumber}_${mentorName.replace(/\s+/g, '_')}.pdf`
+      console.log(`Uploading invoice to Google Drive: ${fileName}`)
+      const invoiceLink = await googleSheetsService.uploadInvoiceToDrive(invoiceBuffer, fileName)
+
+      // Add vendor payment record
+      console.log(`Adding vendor payment record for ${mentorName}`)
+      await googleSheetsService.addVendorPaymentRecord({
+        vendorName: mentorName,
+        vendorPAN: pan || '',
+        paymentDate: paymentDate,
+        totalAmount: totalPayout,
+        tdsPercentage: TDS_RATE * 100, // Convert to percentage
+        tdsAmount: tdsAmount,
+        finalAmountPaid: postTds,
+        tdsPaid: tdsAmount,
+        invoiceLink: invoiceLink
+      })
+
+      // Send email to mentor
+      const host = process.env.SMTP_HOST
+      const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 587
+      const user = process.env.SMTP_USER
+      const pass = process.env.SMTP_PASS
+      const from = process.env.FROM_EMAIL || 'no-reply@gradnext.com'
+
+      const transporter = (host && user && pass) ? nodemailer.createTransport({ host, port, secure: port === 465, auth: { user, pass } }) : null
+      
+      console.log('Email config check:', { host: !!host, user: !!user, pass: !!pass, transporter: !!transporter })
+
+      // Send mentor email (best-effort, non-blocking failure)
+      if (transporter) {
+        try {
+          const mentorDetailList = await googleSheetsService.getMentorDetails()
+          const mentorDetail = mentorDetailList.find(d => d.mentorName.toLowerCase().trim() === mentorName.toLowerCase().trim())
+          const mentorEmail = mentorDetail?.email || ''
+
+          if (mentorEmail) {
+            // Build session table HTML
+            const sessionRows = selected.map((p: any) => `<tr><td>${p.sessionDate}</td><td>${p.menteeName}</td><td>${p.noOfSessions}</td><td>${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(p.totalPayout)}</td></tr>`).join('')
+            const subject = `Payment Payout Processed - ${mentorName}`
+            const text = `Hi ${mentorName},\n\nPayment payout has been processed.\n\nTotal Sessions: ${selected.length}\nTotal Amount (Pre-TDS): ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(totalPayout)}\nTDS (10%): ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(tdsAmount)}\nAmount Credited (Post-TDS): ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(postTds)}\n\nSession-wise Breakdown:\n${selected.map((p: any) => `  ${p.sessionDate} - ${p.menteeName}: ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(p.totalPayout)}`).join('\n')}\n\nBest,\nGradNext`
+            const html = `<p>Hi ${mentorName},</p><p>Payment payout has been processed.</p><p><strong>Total Sessions:</strong> ${selected.length}</p><p><strong>Total Amount (Pre-TDS):</strong> ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(totalPayout)}</p><p><strong>TDS (10%):</strong> ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(tdsAmount)}</p><p><strong>Amount Credited (Post-TDS):</strong> ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(postTds)}</p><h3>Session-wise Breakdown:</h3><table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse;"><thead><tr><th>Date</th><th>Mentee</th><th>Sessions</th><th>Payout</th></tr></thead><tbody>${sessionRows}</tbody></table><p>Best,<br/>gradnext</p>`
+
+            console.log(`Sending mentor email to ${mentorEmail}`)
+            await transporter.sendMail({ from, to: mentorEmail, subject, text, html })
+            console.log(`Mentor email sent successfully to ${mentorEmail}`)
+          } else {
+            console.log(`No email found for mentor ${mentorName}`)
+          }
+        } catch (error) {
+          console.error(`Failed to send mentor email for ${mentorName}:`, error)
+        }
+      }
+
+      // Mark as paid (by provided paymentIds if present, else all by mentor)
+      console.log(`Marking payments as paid for ${mentorName}`)
+      if (paymentIds && Array.isArray(paymentIds) && paymentIds.length > 0) {
+        await googleSheetsService.markFinalPaymentsAsPaid(paymentIds)
+      } else {
+        await googleSheetsService.markFinalPaymentsByMentorAsPaid(mentorName)
+      }
 
       return NextResponse.json({ 
         success: true, 
-        message: `Successfully marked all final payments for ${mentorName} as paid` 
+        message: `Successfully marked all final payments for ${mentorName} as paid`,
+        invoiceLink: invoiceLink,
+        invoiceNumber: invoiceNumber
       })
     }
 

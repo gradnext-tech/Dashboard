@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { PaymentTable } from '@/components/payment-table'
 import { MentorCommissionTable } from '@/components/mentor-commission-table'
+import { TDSPaymentsTable } from '@/components/tds-payments-table'
 import { CorporateSessionsTable } from '@/components/corporate-sessions-table'
 import { CumulativeMentorPaymentsTable } from '@/components/cumulative-mentor-payments-table'
 import { FinalPaymentPostTDSTable } from '@/components/final-payment-post-tds-table'
@@ -43,7 +44,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [exporting, setExporting] = useState(false)
-  const [activeTab, setActiveTab] = useState<'payments' | 'commissions' | 'final-payments-post-tds' | 'pending-payments'>('payments')
+  const [activeTab, setActiveTab] = useState<'payments' | 'commissions' | 'final-payments-post-tds' | 'pending-payments' | 'tds-payments'>('payments')
   const [filteredPayments, setFilteredPayments] = useState<PaymentRecord[]>([])
   const [filteredMentorCommissions, setFilteredMentorCommissions] = useState<Array<{
     mentorName: string
@@ -53,6 +54,21 @@ export default function Dashboard() {
     monthlyBreakdown: Array<{ month: string; payout: number; sessions: number }>
   }>>([])
   const [filteredMonths, setFilteredMonths] = useState<string[]>([])
+  const [tdsPayments, setTdsPayments] = useState<Array<{
+    sNo: number
+    mentorName: string
+    menteeName: string
+    sessionDate: string
+    sessionStatus: string
+    rate: number
+    paymentStatus: string
+    noOfSessions: number
+    totalPayout: number
+    tdsPercentage: number
+    tdsAmount: number
+    postTdsAmount: number
+    dateOfPayment: string
+  }>>([])
 
   useEffect(() => {
     if (authLoading) return
@@ -68,6 +84,7 @@ export default function Dashboard() {
     fetchFinalPayments()
     fetchPendingPayments()
     fetchBankingDetails()
+    fetchTDSPayments()
   }, [isAuthenticated, authLoading, router])
 
   const fetchPayments = async (showDueOnly = true) => {
@@ -162,6 +179,19 @@ export default function Dashboard() {
       setBankingDetails(data.bankingDetails || [])
     } catch (error) {
       console.error('Error fetching banking details:', error)
+    }
+  }
+
+  const fetchTDSPayments = async () => {
+    try {
+      const response = await fetch('/api/payments?type=tds-payments')
+      if (!response.ok) {
+        throw new Error('Failed to fetch TDS payments')
+      }
+      const data = await response.json()
+      setTdsPayments(data.tdsPayments || [])
+    } catch (error) {
+      console.error('Error fetching TDS payments:', error)
     }
   }
 
@@ -319,7 +349,7 @@ export default function Dashboard() {
       const response = await fetch('/api/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'markFinalPaymentsByMentorPaid', mentorName }),
+        body: JSON.stringify({ action: 'markFinalPaymentsByMentorPaid', mentorName, paymentIds }),
       })
 
       if (!response.ok) {
@@ -494,6 +524,20 @@ export default function Dashboard() {
                   Pending Payments
                 </div>
               </button>
+              <button
+                onClick={() => setActiveTab('tds-payments')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'tds-payments'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                <div className="flex items-center">
+                  <DollarSign className="w-4 h-4 mr-2" />
+                  TDS Payments
+                </div>
+              </button>
+              
             </nav>
           </div>
         </div>
@@ -716,6 +760,63 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         )}
+
+        {activeTab === 'tds-payments' && (
+          <Card>
+            <CardHeader>
+              <div className="flex justify-between items-center">
+                <div>
+                  <CardTitle>TDS Payments</CardTitle>
+                  <CardDescription>
+                    Shows only rows where Column M (TDS Paid) has data, grouped by Date of Payment (Column O)
+                  </CardDescription>
+                </div>
+                <Button
+                  onClick={async () => {
+                    setRefreshing(true)
+                    await fetchTDSPayments()
+                    setRefreshing(false)
+                  }}
+                  disabled={refreshing}
+                  variant="outline"
+                >
+                  <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+                  Refresh Data
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <TDSPaymentsTable 
+                tdsPayments={tdsPayments} 
+                loading={refreshing}
+                onMarkMentorPaid={async (mentorName, paymentIds) => {
+                  try {
+                    console.log('Marking TDS as paid for mentor:', mentorName, 'paymentIds:', paymentIds)
+                    const response = await fetch('/api/payments', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ action: 'markTdsByMentorPaid', mentorName, paymentIds })
+                    })
+                    
+                    if (!response.ok) {
+                      const errorData = await response.json()
+                      throw new Error(errorData.error || `HTTP ${response.status}`)
+                    }
+                    
+                    const result = await response.json()
+                    console.log('TDS marked as paid successfully:', result)
+                    await fetchTDSPayments()
+                    alert(`Successfully marked TDS as paid for ${mentorName}`)
+                  } catch (e) {
+                    console.error('Failed to mark TDS as paid for mentor', mentorName, e)
+                    alert(`Failed to mark TDS as paid: ${e instanceof Error ? e.message : 'Unknown error'}`)
+                  }
+                }}
+              />
+            </CardContent>
+          </Card>
+        )}
+        
       </div>
     </div>
   )
