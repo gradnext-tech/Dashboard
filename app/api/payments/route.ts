@@ -3,22 +3,12 @@ import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 import { googleSheetsService } from '@/lib/google-sheets'
-import PDFDocument from 'pdfkit'
+import puppeteer from 'puppeteer-core'
 import nodemailer from 'nodemailer'
-import fs from 'fs'
-import path from 'path'
 
 type InvoiceItem = { date: string; menteeName: string; sessions: number; payout: number }
 
-// Function to ensure font files exist before PDFKit initialization
-function ensureFontFilesExist() {
-  // In production (Vercel), we can't create directories in the build path
-  // PDFKit should work with default fonts without explicit font files
-  console.log('Skipping font file creation in production environment')
-  return
-}
-
-// PDF generation function that avoids font loading issues completely
+// PDF generation function using Puppeteer (works perfectly in Vercel)
 async function generateSimpleInvoicePDF(params: {
   invoiceNumber: string
   mentorName: string
@@ -30,222 +20,204 @@ async function generateSimpleInvoicePDF(params: {
 }): Promise<Buffer> {
   const { invoiceNumber, mentorName, pan, totalSessions, ratePerSession, totalAmount, dateOfPayment } = params
   
-  console.log('Generating PDF without font dependencies...')
+  console.log('Generating PDF using Puppeteer...')
   
-  // Use the simple PDF generation that doesn't trigger font loading
-  return generateSimplePDFInvoice(params)
-}
-
-// Fallback function to generate a simple PDF invoice when PDFKit fails
-async function generateSimplePDFInvoice(params: {
-  invoiceNumber: string
-  mentorName: string
-  pan: string
-  totalSessions: number
-  ratePerSession: number
-  totalAmount: number
-  dateOfPayment: string
-}): Promise<Buffer> {
-  const { invoiceNumber, mentorName, pan, totalSessions, ratePerSession, totalAmount, dateOfPayment } = params
+  // Create HTML content for the invoice
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          margin: 0;
+          padding: 20px;
+          color: #333;
+        }
+        .header {
+          text-align: center;
+          margin-bottom: 30px;
+        }
+        .title {
+          font-size: 36px;
+          font-weight: bold;
+          margin-bottom: 20px;
+        }
+        .invoice-details {
+          display: flex;
+          justify-content: space-between;
+          margin-bottom: 30px;
+        }
+        .billed-by, .billed-to, .invoice-info {
+          flex: 1;
+          margin-right: 20px;
+        }
+        .section-title {
+          font-size: 14px;
+          font-weight: bold;
+          margin-bottom: 10px;
+        }
+        .address {
+          font-size: 12px;
+          line-height: 1.4;
+          color: #666;
+        }
+        .invoice-number {
+          font-size: 12px;
+          margin-bottom: 5px;
+        }
+        .invoice-date {
+          font-size: 12px;
+        }
+        .table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-bottom: 30px;
+        }
+        .table th {
+          background-color: #f5f5f5;
+          padding: 12px;
+          text-align: left;
+          border: 1px solid #ddd;
+          font-size: 12px;
+        }
+        .table td {
+          padding: 12px;
+          border: 1px solid #ddd;
+          font-size: 12px;
+        }
+        .table .quantity {
+          text-align: center;
+        }
+        .table .rate, .table .amount {
+          text-align: right;
+        }
+        .total-section {
+          display: flex;
+          justify-content: flex-end;
+          margin-top: 20px;
+        }
+        .total-box {
+          background-color: white;
+          padding: 15px;
+          border: 1px solid #ddd;
+          width: 200px;
+        }
+        .total-label {
+          font-size: 14px;
+          font-weight: bold;
+          margin-bottom: 5px;
+        }
+        .total-amount {
+          font-size: 16px;
+          font-weight: bold;
+          color: #333;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <div class="title">Invoice</div>
+      </div>
+      
+      <div class="invoice-details">
+        <div class="billed-by">
+          <div class="section-title">Billed By</div>
+          <div style="font-size: 14px; font-weight: bold; margin-bottom: 5px;">Kashish Malhotra</div>
+          <div class="address">
+            1-B Shastri Colony Ambala Cantt<br>
+            Ambala Cantt, India - 133001<br>
+            Phone: +91 82228 66630
+          </div>
+        </div>
+        
+        <div class="billed-to">
+          <div class="section-title">Billed To</div>
+          <div style="font-size: 14px; font-weight: bold; margin-bottom: 5px;">${mentorName}</div>
+          <div class="address">PAN: ${pan || 'N/A'}</div>
+        </div>
+        
+        <div class="invoice-info">
+          <div class="section-title">Invoice Details</div>
+          <div class="invoice-number">Invoice No # ${invoiceNumber}</div>
+          <div class="invoice-date">Invoice Date: ${dateOfPayment}</div>
+        </div>
+      </div>
+      
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th class="quantity">Quantity</th>
+            <th class="rate">Rate</th>
+            <th class="amount">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Vendor payments</td>
+            <td class="quantity">${totalSessions}</td>
+            <td class="rate">₹${ratePerSession.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td class="amount">₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+          </tr>
+        </tbody>
+      </table>
+      
+      <div class="total-section">
+        <div class="total-box">
+          <div class="total-label">Total (INR)</div>
+          <div class="total-amount">₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `
   
-  console.log('Generating simple PDF invoice as fallback...')
-  
-  // Create a very basic PDF using PDFKit with absolute minimal configuration
-  // This approach avoids font loading by not using any font-related methods
-  const doc = new PDFDocument({ 
-    size: 'A4',
-    compress: false,
-    autoFirstPage: false
-  })
-  
-  const buffers: Buffer[] = []
-  doc.on('data', (b: Buffer) => buffers.push(b))
-  
-  // Add first page manually to avoid font loading
-  doc.addPage()
-  
-  // Use only basic text methods without font specifications
-  const pageWidth = 595
-  const pageHeight = 842
-  const margin = 50
-  
-  // Title
-  doc.text('INVOICE', pageWidth / 2, 80, { align: 'center' })
-  
-  // Invoice details
-  doc.text(`Invoice Number: ${invoiceNumber}`, margin, 120)
-  doc.text(`Invoice Date: ${dateOfPayment}`, margin, 140)
-  
-  // Billed by/to sections
-  doc.text('Billed By:', margin, 180)
-  doc.text('Kashish Malhotra', margin, 200)
-  doc.text('1-B Shastri Colony Ambala Cantt', margin, 220)
-  doc.text('Ambala Cantt, India - 133001', margin, 240)
-  doc.text('Phone: +91 82228 66630', margin, 260)
-  
-  doc.text('Billed To:', margin + 300, 180)
-  doc.text(mentorName, margin + 300, 200)
-  doc.text(`PAN: ${pan || 'N/A'}`, margin + 300, 220)
-  
-  // Table headers
-  doc.text('Item', margin, 320)
-  doc.text('Quantity', margin + 200, 320)
-  doc.text('Rate', margin + 300, 320)
-  doc.text('Amount', margin + 400, 320)
-  
-  // Table content
-  doc.text('Vendor payments', margin, 350)
-  doc.text(totalSessions.toString(), margin + 200, 350)
-  doc.text(`₹${ratePerSession.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, margin + 300, 350)
-  doc.text(`₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, margin + 400, 350)
-  
-  // Total
-  doc.text('Total (INR):', margin + 300, 400)
-  doc.text(`₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, margin + 400, 400)
-  
-  doc.end()
-  return await new Promise<Buffer>((resolve) => doc.on('end', () => resolve(Buffer.concat(buffers))))
-}
-
-async function generateStyledInvoicePDF(params: {
-  invoiceNumber: string
-  mentorName: string
-  pan: string
-  totalSessions: number
-  ratePerSession: number
-  totalAmount: number
-  dateOfPayment: string
-}): Promise<Buffer> {
-  const { invoiceNumber, mentorName, pan, totalSessions, ratePerSession, totalAmount, dateOfPayment } = params
-  
-  console.log('Starting PDF generation...')
-  
-  // Skip font file creation in production - PDFKit works with default fonts
-  ensureFontFilesExist()
-  
-  let doc: any
+  let browser
   try {
-    // Configure PDFDocument with minimal options to avoid font loading issues
-    doc = new PDFDocument({ 
-    size: 'A4', 
-      margins: {
-        top: 50,
-        bottom: 50,
-        left: 50,
-        right: 50
+    // Launch Puppeteer with Chrome for Vercel
+    browser = await puppeteer.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu'
+      ]
+    })
+    
+    const page = await browser.newPage()
+    await page.setContent(htmlContent, { waitUntil: 'networkidle0' })
+    
+    // Generate PDF
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: {
+        top: '20mm',
+        right: '20mm',
+        bottom: '20mm',
+        left: '20mm'
       }
     })
-    console.log('PDFDocument created successfully')
-  } catch (fontError) {
-    console.error('PDFDocument creation failed, trying fallback:', fontError)
-    // Fallback: create PDFDocument without any font-related options
-    doc = new PDFDocument({ size: 'A4' })
-    console.log('PDFDocument created with fallback configuration')
+    
+    return Buffer.from(pdfBuffer)
+    
+  } catch (error) {
+    console.error('Error generating PDF with Puppeteer:', error)
+    throw error
+  } finally {
+    if (browser) {
+      await browser.close()
+    }
   }
-  
-  const buffers: Buffer[] = []
-  doc.on('data', (b: Buffer) => buffers.push(b))
-
-  // Page dimensions (A4: 595 x 842 points)
-  const pageWidth = 595
-  const leftMargin = 50
-  const rightMargin = 50
-  const contentWidth = pageWidth - leftMargin - rightMargin // 495 points
-
-  // Colors
-  const darkText = '#1f2937'
-  const grayText = '#6b7280'
-  const lightBg = '#f9fafb'
-  const blueAccent = '#3b82f6'
-
-  // ===== HEADER SECTION =====
-  // Title - "Invoice" (perfectly centered at top)
-  const centerX = leftMargin + (contentWidth / 2)
-  doc.fontSize(36).fillColor(darkText).text('Invoice', centerX, 60, { 
-    align: 'center' 
-  })
-
-  // ===== BILLED BY & BILLED TO SECTION =====
-  const sectionTop = 140
-  
-  // Billed By (left column)
-  doc.fontSize(11).fillColor(darkText).text('Billed By', leftMargin, sectionTop)
-  doc.fontSize(12).fillColor(darkText).text('Kashish Malhotra', leftMargin, sectionTop + 22)
-  doc.fontSize(9).fillColor(grayText)
-  doc.text('1-B Shastri Colony Ambala Cantt,', leftMargin, sectionTop + 40)
-  doc.text('Ambala Cantt, India - 133001', leftMargin, sectionTop + 54)
-  doc.text('Phone: +91 82228 66630', leftMargin, sectionTop + 68)
-
-  // Billed To (middle column)
-  const middleColX = 250
-  doc.fontSize(11).fillColor(darkText).text('Billed To', middleColX, sectionTop)
-  doc.fontSize(12).fillColor(darkText).text(mentorName, middleColX, sectionTop + 22, { width: 200 })
-  doc.fontSize(9).fillColor(grayText).text(`PAN: ${pan || 'N/A'}`, middleColX, sectionTop + 40)
-
-  // Invoice Details (right column)
-  const rightColX = 450
-  doc.fontSize(11).fillColor(darkText).text('Invoice Details', rightColX, sectionTop)
-  
-  doc.fontSize(9).fillColor(grayText).text('Invoice No #', rightColX, sectionTop + 22)
-  doc.fillColor(darkText).text(invoiceNumber, rightColX + 80, sectionTop + 22)
-  
-  doc.fillColor(grayText).text('Invoice Date', rightColX, sectionTop + 38)
-  doc.fillColor(darkText).text(dateOfPayment, rightColX + 80, sectionTop + 38)
-
-  // ===== TABLE SECTION =====
-  const tableTop = 250
-  const tableWidth = contentWidth
-  
-  // Table header background
-  doc.rect(leftMargin, tableTop, tableWidth, 30).fill(lightBg)
-  
-  // Table column positions - shifted left for better visibility
-  const col1X = leftMargin + 15       // Item
-  const col2X = leftMargin + 200      // Quantity (moved left by 50px)
-  const col3X = leftMargin + 280      // Rate (moved left by 50px)
-  const col4X = leftMargin + 360      // Amount (moved left by 60px)
-  
-  // Table headers
-  doc.fontSize(10).fillColor(grayText)
-  doc.text('Item', col1X, tableTop + 10)
-  doc.text('Quantity', col2X, tableTop + 10, { width: 70, align: 'center' })
-  doc.text('Rate', col3X, tableTop + 10, { width: 80, align: 'right' })
-  doc.text('Amount', col4X, tableTop + 10, { width: 100, align: 'right' })
-
-  // Table row - Vendor payments
-  const rowTop = tableTop + 42
-  doc.fontSize(10).fillColor(darkText)
-  doc.text('Vendor payments', col1X, rowTop)
-  doc.text(totalSessions.toString(), col2X, rowTop, { width: 70, align: 'center' })
-  
-  // Format amounts with rupee symbol
-  const formattedRate = `₹${ratePerSession.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  const formattedAmount = `₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  
-  doc.text(formattedRate, col3X, rowTop, { width: 80, align: 'right' })
-  doc.text(formattedAmount, col4X, rowTop, { width: 100, align: 'right' })
-
-  // ===== REDUCTIONS & TOTAL SECTION =====
-  const summaryTop = rowTop + 50
-  
-  // Reductions row
-  doc.fontSize(10).fillColor(grayText)
-  doc.text('Reductions', col3X, summaryTop, { width: 80, align: 'right' })
-  doc.fillColor(darkText).text('₹0.00', col4X, summaryTop, { width: 100, align: 'right' })
-
-  // Total section with white background and dark font
-  const totalBoxTop = summaryTop + 30
-  
-  // Total label and amount - dark font on white background
-  doc.fontSize(12).fillColor(darkText)
-  doc.text('Total (INR)', col3X, totalBoxTop + 12, { width: 80, align: 'right' })
-  
-  const formattedTotal = `₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  doc.fontSize(14).text(formattedTotal, col4X, totalBoxTop + 10, { width: 100, align: 'right' })
-
-  doc.end()
-  return await new Promise<Buffer>((resolve) => doc.on('end', () => resolve(Buffer.concat(buffers))))
 }
+
 
 export async function GET(request: NextRequest) {
   try {
