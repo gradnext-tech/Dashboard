@@ -18,7 +18,7 @@ function ensureFontFilesExist() {
   return
 }
 
-// Alternative PDF generation function that avoids font loading issues
+// PDF generation function using custom bundled fonts
 async function generateSimpleInvoicePDF(params: {
   invoiceNumber: string
   mentorName: string
@@ -30,13 +30,34 @@ async function generateSimpleInvoicePDF(params: {
 }): Promise<Buffer> {
   const { invoiceNumber, mentorName, pan, totalSessions, ratePerSession, totalAmount, dateOfPayment } = params
   
-  console.log('Using simple PDF generation to avoid font issues...')
+  console.log('Generating PDF with custom bundled fonts...')
   
-  // Create PDFDocument with minimal configuration
-  const doc = new PDFDocument({ size: 'A4' })
+  // Create PDFDocument
+  const doc = new PDFDocument({ 
+    size: 'A4',
+    margins: {
+      top: 50,
+      bottom: 50,
+      left: 50,
+      right: 50
+    }
+  })
   
   const buffers: Buffer[] = []
   doc.on('data', (b: Buffer) => buffers.push(b))
+  
+  // Register custom fonts
+  try {
+    const regularFontPath = path.join(process.cwd(), 'public', 'fonts', 'Roboto-Regular.ttf')
+    const boldFontPath = path.join(process.cwd(), 'public', 'fonts', 'Roboto-Bold.ttf')
+    
+    doc.registerFont('Roboto', regularFontPath)
+    doc.registerFont('Roboto-Bold', boldFontPath)
+    console.log('Custom fonts registered successfully')
+  } catch (fontError) {
+    console.error('Font registration failed:', fontError)
+    // Continue without custom fonts - PDFKit will use defaults
+  }
 
   // Page dimensions (A4: 595 x 842 points)
   const pageWidth = 595
@@ -51,7 +72,7 @@ async function generateSimpleInvoicePDF(params: {
   // ===== HEADER SECTION =====
   // Title - "Invoice" (perfectly centered at top)
   const centerX = leftMargin + (contentWidth / 2)
-  doc.fontSize(36).fillColor(darkText).text('Invoice', centerX, 60, { 
+  doc.font('Roboto-Bold').fontSize(36).fillColor(darkText).text('Invoice', centerX, 60, { 
     align: 'center' 
   })
 
@@ -134,6 +155,77 @@ async function generateSimpleInvoicePDF(params: {
   return await new Promise<Buffer>((resolve) => doc.on('end', () => resolve(Buffer.concat(buffers))))
 }
 
+// Fallback function to generate a simple PDF invoice when PDFKit fails
+async function generateSimplePDFInvoice(params: {
+  invoiceNumber: string
+  mentorName: string
+  pan: string
+  totalSessions: number
+  ratePerSession: number
+  totalAmount: number
+  dateOfPayment: string
+}): Promise<Buffer> {
+  const { invoiceNumber, mentorName, pan, totalSessions, ratePerSession, totalAmount, dateOfPayment } = params
+  
+  console.log('Generating simple PDF invoice as fallback...')
+  
+  // Create a very basic PDF using PDFKit with absolute minimal configuration
+  // This approach avoids font loading by not using any font-related methods
+  const doc = new PDFDocument({ 
+    size: 'A4',
+    compress: false,
+    autoFirstPage: false
+  })
+  
+  const buffers: Buffer[] = []
+  doc.on('data', (b: Buffer) => buffers.push(b))
+  
+  // Add first page manually to avoid font loading
+  doc.addPage()
+  
+  // Use only basic text methods without font specifications
+  const pageWidth = 595
+  const pageHeight = 842
+  const margin = 50
+  
+  // Title
+  doc.text('INVOICE', pageWidth / 2, 80, { align: 'center' })
+  
+  // Invoice details
+  doc.text(`Invoice Number: ${invoiceNumber}`, margin, 120)
+  doc.text(`Invoice Date: ${dateOfPayment}`, margin, 140)
+  
+  // Billed by/to sections
+  doc.text('Billed By:', margin, 180)
+  doc.text('Kashish Malhotra', margin, 200)
+  doc.text('1-B Shastri Colony Ambala Cantt', margin, 220)
+  doc.text('Ambala Cantt, India - 133001', margin, 240)
+  doc.text('Phone: +91 82228 66630', margin, 260)
+  
+  doc.text('Billed To:', margin + 300, 180)
+  doc.text(mentorName, margin + 300, 200)
+  doc.text(`PAN: ${pan || 'N/A'}`, margin + 300, 220)
+  
+  // Table headers
+  doc.text('Item', margin, 320)
+  doc.text('Quantity', margin + 200, 320)
+  doc.text('Rate', margin + 300, 320)
+  doc.text('Amount', margin + 400, 320)
+  
+  // Table content
+  doc.text('Vendor payments', margin, 350)
+  doc.text(totalSessions.toString(), margin + 200, 350)
+  doc.text(`₹${ratePerSession.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, margin + 300, 350)
+  doc.text(`₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, margin + 400, 350)
+  
+  // Total
+  doc.text('Total (INR):', margin + 300, 400)
+  doc.text(`₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, margin + 400, 400)
+  
+  doc.end()
+  return await new Promise<Buffer>((resolve) => doc.on('end', () => resolve(Buffer.concat(buffers))))
+}
+
 async function generateStyledInvoicePDF(params: {
   invoiceNumber: string
   mentorName: string
@@ -154,7 +246,7 @@ async function generateStyledInvoicePDF(params: {
   try {
     // Configure PDFDocument with minimal options to avoid font loading issues
     doc = new PDFDocument({ 
-      size: 'A4',
+    size: 'A4', 
       margins: {
         top: 50,
         bottom: 50,
@@ -884,7 +976,7 @@ export async function POST(request: NextRequest) {
       const from = process.env.FROM_EMAIL || 'no-reply@gradnext.com'
 
       const transporter = (host && user && pass) ? nodemailer.createTransport({ host, port, secure: port === 465, auth: { user, pass } }) : null
-      
+
       console.log('Email config check:', { host: !!host, user: !!user, pass: !!pass, transporter: !!transporter })
 
       // Send mentor email (best-effort, non-blocking failure)
@@ -901,13 +993,13 @@ export async function POST(request: NextRequest) {
             const text = `Hi ${mentorName},\n\nPayment payout has been processed.\n\nTotal Sessions: ${selected.length}\nTotal Amount (Pre-TDS): ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(totalPayout)}\nTDS (10%): ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(tdsAmount)}\nAmount Credited (Post-TDS): ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(postTds)}\n\nSession-wise Breakdown:\n${selected.map((p: any) => `  ${p.sessionDate} - ${p.menteeName}: ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(p.totalPayout)}`).join('\n')}\n\nBest,\nGradNext`
             const html = `<p>Hi ${mentorName},</p><p>Payment payout has been processed.</p><p><strong>Total Sessions:</strong> ${selected.length}</p><p><strong>Total Amount (Pre-TDS):</strong> ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(totalPayout)}</p><p><strong>TDS (10%):</strong> ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(tdsAmount)}</p><p><strong>Amount Credited (Post-TDS):</strong> ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(postTds)}</p><h3>Session-wise Breakdown:</h3><table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse;"><thead><tr><th>Date</th><th>Mentee</th><th>Sessions</th><th>Payout</th></tr></thead><tbody>${sessionRows}</tbody></table><p>Best,<br/>gradnext</p>`
 
-            console.log(`Sending mentor email to ${mentorEmail}`)
-            await transporter.sendMail({ from, to: mentorEmail, subject, text, html })
-            console.log(`Mentor email sent successfully to ${mentorEmail}`)
+              console.log(`Sending mentor email to ${mentorEmail}`)
+              await transporter.sendMail({ from, to: mentorEmail, subject, text, html })
+              console.log(`Mentor email sent successfully to ${mentorEmail}`)
           } else {
             console.log(`No email found for mentor ${mentorName}`)
           }
-        } catch (error) {
+          } catch (error) {
           console.error(`Failed to send mentor email for ${mentorName}:`, error)
         }
       }
