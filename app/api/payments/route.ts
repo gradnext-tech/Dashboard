@@ -12,12 +12,14 @@ async function generateSimpleInvoicePDF(params: {
   invoiceNumber: string
   mentorName: string
   pan: string
+  mentorEmail: string
+  mentorPhone: string
   totalSessions: number
   ratePerSession: number
   totalAmount: number
   dateOfPayment: string
 }): Promise<Buffer> {
-  const { invoiceNumber, mentorName, pan, totalSessions, ratePerSession, totalAmount, dateOfPayment } = params
+  const { invoiceNumber, mentorName, pan, mentorEmail, mentorPhone, totalSessions, ratePerSession, totalAmount, dateOfPayment } = params
   
   console.log('Generating PDF using Puppeteer...')
   
@@ -127,18 +129,22 @@ async function generateSimpleInvoicePDF(params: {
       <div class="invoice-details">
         <div class="billed-by">
           <div class="section-title">Billed By</div>
-          <div style="font-size: 14px; font-weight: bold; margin-bottom: 5px;">Kashish Malhotra</div>
+          <div style="font-size: 14px; font-weight: bold; margin-bottom: 5px;">${mentorName}</div>
           <div class="address">
-            1-B Shastri Colony Ambala Cantt<br>
-            Ambala Cantt, India - 133001<br>
-            Phone: +91 82228 66630
+            Email: ${mentorEmail || 'N/A'}<br>
+            PAN: ${pan || 'N/A'}<br>
+            Phone: ${mentorPhone || 'N/A'}
           </div>
         </div>
         
         <div class="billed-to">
           <div class="section-title">Billed To</div>
-          <div style="font-size: 14px; font-weight: bold; margin-bottom: 5px;">${mentorName}</div>
-          <div class="address">PAN: ${pan || 'N/A'}</div>
+          <div style="font-size: 14px; font-weight: bold; margin-bottom: 5px;">Keisei Consulting Private Limited</div>
+          <div class="address">
+            1-B Shastri Colony Ambala Cantt<br>
+            Ambala Cantt, India - 133001<br>
+            Phone: +91 82228 66630
+          </div>
         </div>
         
         <div class="invoice-info">
@@ -513,6 +519,8 @@ export async function POST(request: NextRequest) {
               invoiceNumber,
               mentorName,
               pan,
+              mentorEmail: mentorEmail || 'N/A',
+              mentorPhone: 'N/A', // Phone not available in this context
               totalSessions,
               ratePerSession,
               totalAmount: totalPayout,
@@ -776,8 +784,12 @@ export async function POST(request: NextRequest) {
       const postTds = totalPayout - tdsAmount
       const paymentDate = new Date().toLocaleDateString('en-IN')
 
-      // Get mentor PAN
+      // Get mentor PAN, email, and phone
       const pan = await googleSheetsService.getMentorPAN(mentorName)
+      const mentorDetailList = await googleSheetsService.getMentorDetails()
+      const mentorDetail = mentorDetailList.find(d => d.mentorName.toLowerCase().trim() === mentorName.toLowerCase().trim())
+      const mentorEmail = mentorDetail?.email || 'N/A'
+      const mentorPhone = mentorDetail?.phone || 'N/A'
 
       // Generate invoice number based on mentor initials
       const invoiceCount = await googleSheetsService.getVendorInvoiceCountForMentor(mentorName)
@@ -792,6 +804,8 @@ export async function POST(request: NextRequest) {
         invoiceNumber,
         mentorName,
         pan,
+        mentorEmail,
+        mentorPhone,
         totalSessions,
         ratePerSession,
         totalAmount: totalPayout,
