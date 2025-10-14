@@ -27,6 +27,16 @@ async function generateSimpleInvoicePDF(params: {
   const puppeteer = await import('puppeteer-core')
   const chromium = await import('@sparticuz/chromium')
   
+  // Compute robust values to avoid 0s when inputs are missing/rounded
+  const safeTotalAmount = Number.isFinite(totalAmount) && totalAmount > 0 ? totalAmount : 0
+  const computedQuantity = Number.isFinite(totalSessions) && totalSessions > 0
+    ? Math.floor(totalSessions)
+    : (safeTotalAmount > 0 ? 1 : 0)
+  const computedRate = computedQuantity > 0
+    ? ((Number.isFinite(ratePerSession) && ratePerSession > 0) ? ratePerSession : (safeTotalAmount / computedQuantity))
+    : 0
+  const computedAmount = safeTotalAmount > 0 ? safeTotalAmount : (computedQuantity * computedRate)
+
   // Create HTML content for the invoice
   const htmlContent = `
     <!DOCTYPE html>
@@ -144,6 +154,7 @@ async function generateSimpleInvoicePDF(params: {
             1-B Shastri Colony Ambala Cantt<br>
             Ambala Cantt, India - 133001<br>
             Phone: +91 82228 66630
+            GST Number: 06AALCK9474G1Z1
           </div>
         </div>
         
@@ -165,10 +176,10 @@ async function generateSimpleInvoicePDF(params: {
         </thead>
         <tbody>
           <tr>
-            <td>Vendor payments</td>
-            <td class="quantity">${totalSessions}</td>
-            <td class="rate">₹${ratePerSession.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-            <td class="amount">₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td>Consulting Sessions</td>
+            <td class="quantity">${computedQuantity}</td>
+            <td class="rate">₹${computedRate.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td class="amount">₹${computedAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>
         </tbody>
       </table>
@@ -176,7 +187,7 @@ async function generateSimpleInvoicePDF(params: {
       <div class="total-section">
         <div class="total-box">
           <div class="total-label">Total (INR)</div>
-          <div class="total-amount">₹${totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          <div class="total-amount">₹${computedAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
         </div>
       </div>
     </body>
@@ -185,11 +196,54 @@ async function generateSimpleInvoicePDF(params: {
   
   let browser
   try {
-    // Launch Puppeteer with Vercel-compatible Chromium
-    browser = await puppeteer.default.launch({
-      args: [...chromium.default.args, '--hide-scrollbars', '--disable-web-security'],
+    // Prefer serverless-compatible Chromium in production/server
+    const { default: chromium } = await import('@sparticuz/chromium')
+    const { default: puppeteerCore } = await import('puppeteer-core')
+
+    // Resolve executable path
+    let executablePath = process.env.CHROME_PATH || await chromium.executablePath()
+
+    // In local/dev, chromium.executablePath() may be null; try common Chrome paths
+    if (!executablePath) {
+      const os = process.platform
+      const candidates = os === 'darwin'
+        ? [
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '/Applications/Chromium.app/Contents/MacOS/Chromium'
+          ]
+        : os === 'linux'
+        ? [
+            '/usr/bin/google-chrome',
+            '/usr/bin/chromium-browser',
+            '/usr/bin/chromium'
+          ]
+        : [
+            'C:/Program Files/Google/Chrome/Application/chrome.exe',
+            'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
+          ]
+
+      const fsMod = await import('fs')
+      for (const p of candidates) {
+        try {
+          if (fsMod.existsSync(p)) { executablePath = p; break }
+        } catch {}
+      }
+    }
+
+    if (!executablePath) {
+      throw new Error('Chromium executable not found. Set CHROME_PATH or install Google Chrome locally.')
+    }
+
+    // Choose args: serverless chromium vs local installed Chrome
+    const isLocalChrome = /Google Chrome|Chromium|chrome\.exe/i.test(executablePath)
+    const launchArgs = isLocalChrome
+      ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--hide-scrollbars']
+      : [...chromium.args, '--hide-scrollbars']
+
+    browser = await puppeteerCore.launch({
+      args: launchArgs,
       defaultViewport: { width: 1200, height: 800 },
-      executablePath: await chromium.default.executablePath(),
+      executablePath,
       headless: true,
     })
     
@@ -215,7 +269,7 @@ async function generateSimpleInvoicePDF(params: {
     throw error
   } finally {
     if (browser) {
-      await browser.close()
+      try { await browser.close() } catch {}
     }
   }
 }
@@ -297,6 +351,79 @@ export async function POST(request: NextRequest) {
 
       try {
         const result = await googleSheetsService.markTDSPaymentsByMentorAsPaid(mentorName, paymentIds)
+
+        // Build TDS invoice and summary only if updates occurred
+        if (result) {
+          // Fetch mentor details
+          const mentorDetailList = await googleSheetsService.getMentorDetails()
+          const mentorDetail = mentorDetailList.find(d => d.mentorName.toLowerCase().trim() === mentorName.toLowerCase().trim())
+          const mentorEmail = mentorDetail?.email || 'N/A'
+          const mentorPhone = mentorDetail?.phone || 'N/A'
+          const pan = await googleSheetsService.getMentorPAN(mentorName)
+
+          // Get all TDS payments (unpaid tag only) to compute aggregates for this mentor
+          const tdsPayments = await googleSheetsService.getTDSPaymentsFromMentorCommissionSheet()
+          // Restrict to only the selected rows if paymentIds provided (scope to date-specific selection)
+          const idSet = new Set(Array.isArray(paymentIds) ? paymentIds : [])
+          const mentorTdsRows = tdsPayments.filter(p => {
+            const matchesMentor = p.mentorName.toLowerCase().trim() === mentorName.toLowerCase().trim()
+            if (!matchesMentor) return false
+            if (idSet.size === 0) return true
+            const rowId = `tds_${p.sNo}`
+            return idSet.has(rowId)
+          })
+
+          // Aggregate totals
+          const totalAmount = mentorTdsRows.reduce((s, p) => s + (p.totalPayout || 0), 0)
+          const tdsPaid = mentorTdsRows.reduce((s, p) => s + (p.tdsAmount || 0), 0)
+          const postTdsAmount = mentorTdsRows.reduce((s, p) => s + (p.postTdsAmount || 0), 0)
+
+          // Determine date of payment from Mentor Commission sheet (Column O per-row)
+          // Use the latest date across the selected rows as invoice date
+          const dateCandidates = mentorTdsRows
+            .map(r => new Date(r.dateOfPayment))
+            .filter(d => !isNaN(d.getTime()))
+          const latest = dateCandidates.length > 0 ? new Date(Math.max(...dateCandidates.map(d => d.getTime()))) : new Date()
+          const dateOfPayment = latest.toLocaleDateString('en-IN')
+
+          // Generate invoice number using mentor initials with TDS counter
+          const tdsInvoiceCount = await googleSheetsService.getTDSInvoiceCountForMentor(mentorName)
+          const nameParts = mentorName.trim().split(/\s+/)
+          const firstInitial = nameParts[0]?.charAt(0).toUpperCase() || 'X'
+          const lastInitial = nameParts[nameParts.length - 1]?.charAt(0).toUpperCase() || 'X'
+          const invoiceNumber = `${firstInitial}${lastInitial}-TDS-${String(tdsInvoiceCount + 1).padStart(3, '0')}`
+
+          // Build a minimal HTML for TDS invoice (reuse Puppeteer renderer)
+          const invoiceBuffer = await generateSimpleInvoicePDF({
+            invoiceNumber,
+            mentorName,
+            pan,
+            mentorEmail,
+            mentorPhone,
+            totalSessions: mentorTdsRows.reduce((s, p) => s + (p.noOfSessions || 0), 0),
+            ratePerSession: totalAmount > 0 ? totalAmount / Math.max(1, mentorTdsRows.reduce((s, p) => s + (p.noOfSessions || 0), 0)) : 0,
+            totalAmount: totalAmount,
+            dateOfPayment
+          })
+
+          // Upload to Drive
+          const fileName = `TDS_Invoice_${invoiceNumber}_${mentorName.replace(/\s+/g, '_')}.pdf`
+          const invoiceLink = await googleSheetsService.uploadInvoiceToDrive(invoiceBuffer, fileName)
+
+          // Write to TDS summary sheet
+          await googleSheetsService.addTDSSummaryRecord({
+            dateOfPayment,
+            invoiceNumber,
+            mentorName,
+            panNumber: pan || '',
+            totalAmount,
+            tdsPaid,
+            postTdsAmount,
+            tdsStatus: 'Paid',
+            invoiceLink
+          })
+        }
+
         return NextResponse.json({ success: true, result })
       } catch (error) {
         console.error('Error marking TDS payments by mentor as paid:', error)
@@ -498,42 +625,17 @@ export async function POST(request: NextRequest) {
             console.log(`No email found for mentor ${mentorName}`)
           }
 
-          // Finance invoice email (text/html)
+          // Finance summary email (no invoice attachment as per new flow)
           try {
-            console.log(`Generating PDF and sending finance email for ${mentorName}`)
+            console.log(`Sending finance summary email for ${mentorName}`)
             const pan = await googleSheetsService.getMentorPAN(mentorName)
-            
-            // Calculate totals for invoice
-            const totalSessions = (items as any[]).reduce((sum: number, p: any) => sum + (p.noOfSessions || 0), 0)
-            const ratePerSession = totalSessions > 0 ? totalPayout / totalSessions : 0
-            const paymentDate = new Date().toLocaleDateString('en-IN')
-            
-            // Generate invoice number
-            const invoiceCount = await googleSheetsService.getVendorInvoiceCountForMentor(mentorName)
-            const nameParts = mentorName.trim().split(/\s+/)
-            const firstInitial = nameParts[0]?.charAt(0).toUpperCase() || 'X'
-            const lastInitial = nameParts[nameParts.length - 1]?.charAt(0).toUpperCase() || 'X'
-            const invoiceNumber = `${firstInitial}${lastInitial}-${String(invoiceCount + 1).padStart(3, '0')}`
-            
-            const invoiceBuffer = await generateSimpleInvoicePDF({
-              invoiceNumber,
-              mentorName,
-              pan,
-              mentorEmail: mentorEmail || 'N/A',
-              mentorPhone: 'N/A', // Phone not available in this context
-              totalSessions,
-              ratePerSession,
-              totalAmount: totalPayout,
-              dateOfPayment: paymentDate
-            })
             await transporter.sendMail({
               from,
               to: financeTo,
-              subject: `Invoice - ${mentorName}`,
-              text: `Payout processed for ${mentorName}. Total Due (Pre-TDS): ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(totalPayout)}. PAN: ${pan || 'N/A'}.`,
-              attachments: [{ filename: `Invoice_${invoiceNumber}_${mentorName.replace(/\s+/g,'_')}.pdf`, content: invoiceBuffer }]
+              subject: `Payout Summary - ${mentorName}`,
+              text: `Payout processed for ${mentorName}. Total Due (Pre-TDS): ${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(totalPayout)}. PAN: ${pan || 'N/A'}.`
             })
-            console.log(`Finance email sent successfully for ${mentorName}`)
+            console.log(`Finance summary email sent successfully for ${mentorName}`)
           } catch (error) {
             console.error(`Failed to send finance email for ${mentorName}:`, error)
           }
@@ -798,38 +900,7 @@ export async function POST(request: NextRequest) {
       const lastInitial = nameParts[nameParts.length - 1]?.charAt(0).toUpperCase() || 'X'
       const invoiceNumber = `${firstInitial}${lastInitial}-${String(invoiceCount + 1).padStart(3, '0')}`
 
-      // Generate invoice PDF
-      console.log(`Generating invoice PDF for ${mentorName} with invoice number ${invoiceNumber}`)
-      const invoiceBuffer = await generateSimpleInvoicePDF({
-        invoiceNumber,
-        mentorName,
-        pan,
-        mentorEmail,
-        mentorPhone,
-        totalSessions,
-        ratePerSession,
-        totalAmount: totalPayout,
-        dateOfPayment: paymentDate
-      })
-
-      // Upload invoice to Google Drive
-      const fileName = `Invoice_${invoiceNumber}_${mentorName.replace(/\s+/g, '_')}.pdf`
-      console.log(`Uploading invoice to Google Drive: ${fileName}`)
-      const invoiceLink = await googleSheetsService.uploadInvoiceToDrive(invoiceBuffer, fileName)
-
-      // Add vendor payment record
-      console.log(`Adding vendor payment record for ${mentorName}`)
-      await googleSheetsService.addVendorPaymentRecord({
-        vendorName: mentorName,
-        vendorPAN: pan || '',
-        paymentDate: paymentDate,
-        totalAmount: totalPayout,
-        tdsPercentage: TDS_RATE * 100, // Convert to percentage
-        tdsAmount: tdsAmount,
-        finalAmountPaid: postTds,
-        tdsPaid: tdsAmount,
-        invoiceLink: invoiceLink
-      })
+      // Do not add Vendor Payments record in Final Payments flow as per new requirement
 
       // Send email to mentor
       const host = process.env.SMTP_HOST
@@ -877,9 +948,7 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({ 
         success: true, 
-        message: `Successfully marked all final payments for ${mentorName} as paid`,
-        invoiceLink: invoiceLink,
-        invoiceNumber: invoiceNumber
+        message: `Successfully marked all final payments for ${mentorName} as paid` 
       })
     }
 

@@ -1530,7 +1530,7 @@ class GoogleSheetsService {
     }
   }
 
-  async markTDSPaymentsByMentorAsPaid(mentorName: string, paymentIds?: string[]): Promise<boolean> {
+  async markTDSPaymentsByMentorAsPaid(mentorName: string, paymentIds?: string[] | string | number): Promise<boolean> {
     try {
       console.log('markTDSPaymentsByMentorAsPaid called with mentor:', mentorName, 'paymentIds:', paymentIds)
       const mentorCommissionSheetId = process.env.MENTOR_COMMISSION_SHEET_ID
@@ -1552,6 +1552,14 @@ class GoogleSheetsService {
       }
 
       const normalizedMentorName = mentorName.trim().toLowerCase()
+      // Normalize paymentIds to a Set of strings (accept number/single value/array)
+      const normalizedIds = new Set<string>(
+        Array.isArray(paymentIds)
+          ? (paymentIds as any[]).map(id => String(id))
+          : (paymentIds === undefined || paymentIds === null)
+            ? []
+            : [String(paymentIds)]
+      )
       const updates: any[] = []
       
       // Find all rows for this mentor with TDS data and mark TDS Paid Tag as "Paid"
@@ -1560,7 +1568,10 @@ class GoogleSheetsService {
         if (!row || row.length < 13) continue // Need at least column M (TDS Paid)
         
         const rowMentorName = (row[1] || '').toString().trim().toLowerCase() // Column B is Mentor Name
-        const sNo = row[0] // Column A is S.No
+        // Column A is S.No; normalize to integer string to match UI id format
+        const sNoRaw = (row[0] || '').toString().trim()
+        const sNoNum = parseInt(sNoRaw)
+        const sNo = Number.isFinite(sNoNum) ? sNoNum.toString() : sNoRaw
         const tdsAmountCell = row[12] // Column M: TDS Paid
         
         // Check if this row matches the mentor
@@ -1572,10 +1583,10 @@ class GoogleSheetsService {
         const tdsAmount = parseFloat(tdsAmountCell)
         if (isNaN(tdsAmount) || tdsAmount <= 0) continue
         
-        // If paymentIds are provided, check if this row is included
-        if (Array.isArray(paymentIds) && paymentIds.length > 0) {
-          const rowId = `tds_${sNo}`
-          if (!paymentIds.includes(rowId)) continue
+        // If paymentIds are provided, check if this row is included strictly by S.No-based id
+        if (normalizedIds.size > 0) {
+          const bySNo = `tds_${sNo}`
+          if (!normalizedIds.has(bySNo)) continue
         }
         
         // Update Column P (index 15) with "Paid" - this is the TDS Paid Tag column
@@ -1746,11 +1757,25 @@ class GoogleSheetsService {
           // Also check if the parsed TDS amount is a valid positive number
           if (isNaN(tdsAmount) || tdsAmount <= 0) return null
 
-          // Require a valid Date of Payment
-          const dateString = (dateOfPaymentCell || '').toString().trim()
-          if (!dateString) return null
-          const parsedDate = new Date(dateString)
-          if (isNaN(parsedDate.getTime())) return null
+          // Require a Date of Payment value; normalize to en-IN (DD/MM/YYYY) without strict Date parsing
+          const rawDate = (dateOfPaymentCell || '').toString().trim()
+          if (!rawDate) return null
+          const normalizeEnIn = (s: string): string => {
+            // Accept already formatted DD/MM/YYYY or D/M/YYYY
+            const m = s.match(/^\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\s*$/)
+            if (m) {
+              const d = m[1].padStart(2, '0')
+              const mo = m[2].padStart(2, '0')
+              let y = m[3]
+              if (y.length === 2) y = `20${y}`
+              return `${d}/${mo}/${y}`
+            }
+            // Fallback: try Date parsing, else return original string
+            const dt = new Date(s)
+            if (!isNaN(dt.getTime())) return dt.toLocaleDateString('en-IN')
+            return s
+          }
+          const dateString = normalizeEnIn(rawDate)
 
           // Exclude rows where TDS Paid Tag is "Paid"
           const tdsPaidTag = (tdsPaidTagCell || '').toString().trim().toLowerCase()
@@ -1771,7 +1796,7 @@ class GoogleSheetsService {
             tdsPercentage: parseFloat(row[11]) || 0.10, // Column L: TDS %
             tdsAmount: tdsAmount, // Column M: TDS Paid
             postTdsAmount: parseFloat(row[13]) || 0, // Column N: Post TDS
-            dateOfPayment: dateString // Column O: Date of Payment
+            dateOfPayment: dateString // Column O: Date of Payment (normalized)
           }
         })
         .filter((payment: any): payment is {
@@ -1941,6 +1966,104 @@ class GoogleSheetsService {
     }
   }
 
+  async getTDSInvoiceCountForMentor(mentorName: string): Promise<number> {
+    try {
+      const mentorCommissionSheetId = process.env.MENTOR_COMMISSION_SHEET_ID
+      if (!mentorCommissionSheetId) {
+        throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
+      }
+
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: mentorCommissionSheetId,
+        range: 'TDS summary!A:I'
+      })
+
+      const rows = response.data.values || []
+      if (rows.length <= 1) return 0
+
+      const normalized = mentorName.toLowerCase().trim()
+      const count = rows.slice(1).filter((row: any) => {
+        const name = (row[2] || '').toString().toLowerCase().trim()
+        return name === normalized
+      }).length
+
+      return count
+    } catch (error) {
+      console.error('Error getting TDS invoice count for mentor:', error)
+      return 0
+    }
+  }
+
+  async addTDSSummaryRecord(data: {
+    dateOfPayment: string
+    invoiceNumber: string
+    mentorName: string
+    panNumber: string
+    totalAmount: number
+    tdsPaid: number
+    postTdsAmount: number
+    tdsStatus: string
+    invoiceLink: string
+  }): Promise<void> {
+    try {
+      const mentorCommissionSheetId = process.env.MENTOR_COMMISSION_SHEET_ID
+      if (!mentorCommissionSheetId) {
+        throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
+      }
+
+      // Ensure sheet exists by attempting to read; if missing, create with headers
+      let rows: any[] = []
+      try {
+        const read = await this.sheets.spreadsheets.values.get({
+          spreadsheetId: mentorCommissionSheetId,
+          range: 'TDS summary!A:I'
+        })
+        rows = read.data.values || []
+      } catch {
+        // Create sheet and headers
+        await this.sheets.spreadsheets.batchUpdate({
+          spreadsheetId: mentorCommissionSheetId,
+          requestBody: {
+            requests: [{ addSheet: { properties: { title: 'TDS summary' } } }]
+          }
+        })
+        await this.sheets.spreadsheets.values.update({
+          spreadsheetId: mentorCommissionSheetId,
+          range: 'TDS summary!A1:I1',
+          valueInputOption: 'RAW',
+          requestBody: {
+            values: [[
+              'Date of Payment','Invoice Number','Mentor Name','PAN Number','Total Amount','TDS Paid','Post TDS Amount','TDS Status','Invoice Link'
+            ]]
+          }
+        })
+        rows = [['Date of Payment','Invoice Number','Mentor Name','PAN Number','Total Amount','TDS Paid','Post TDS Amount','TDS Status','Invoice Link']]
+      }
+
+      const newRow = [
+        data.dateOfPayment,
+        data.invoiceNumber,
+        data.mentorName,
+        data.panNumber,
+        data.totalAmount,
+        data.tdsPaid,
+        data.postTdsAmount,
+        data.tdsStatus,
+        data.invoiceLink
+      ]
+
+      await this.sheets.spreadsheets.values.append({
+        spreadsheetId: mentorCommissionSheetId,
+        range: 'TDS summary!A:I',
+        valueInputOption: 'RAW',
+        insertDataOption: 'INSERT_ROWS',
+        requestBody: { values: [newRow] }
+      })
+    } catch (error) {
+      console.error('Error adding TDS summary record:', error)
+      throw error
+    }
+  }
   async addVendorPaymentRecord(data: {
     vendorName: string
     vendorPAN: string

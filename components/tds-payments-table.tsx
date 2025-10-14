@@ -43,6 +43,8 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set())
   const [processing, setProcessing] = useState(false)
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set())
+  const [groupMode, setGroupMode] = useState<'date' | 'mentor'>('date')
+  const [expandedMentors, setExpandedMentors] = useState<Set<string>>(new Set())
 
   // Normalize date for consistent grouping
   const normalizeDateKey = (dateStr: string): string => {
@@ -103,7 +105,60 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
     })
   }
 
+  // Group by Mentor, then by Date of Payment
+  const groupByMentor = (payments: TDSPayment[]): Array<{
+    mentorName: string
+    totalTDS: number
+    dates: Array<{
+      date: string
+      totalTDS: number
+      payments: TDSPayment[]
+    }>
+  }> => {
+    const mentorGroups = payments.reduce((acc, payment) => {
+      const key = payment.mentorName || 'Unknown Mentor'
+      if (!acc[key]) acc[key] = []
+      acc[key].push(payment)
+      return acc
+    }, {} as Record<string, TDSPayment[]>)
+
+    const result = Object.entries(mentorGroups).map(([mentorName, mentorPayments]) => {
+      // group this mentor's payments by payment date
+      const dateGroups = mentorPayments.reduce((acc, p) => {
+    const dateKey = normalizeDateKey(p.dateOfPayment)
+        if (!acc[dateKey]) acc[dateKey] = []
+        acc[dateKey].push(p)
+    return acc
+      }, {} as Record<string, TDSPayment[]>)
+
+      const dates = Object.entries(dateGroups).map(([date, payments]) => ({
+      date,
+        totalTDS: payments.reduce((sum, x) => sum + (x.tdsAmount || 0), 0),
+        payments: payments.sort((a, b) => {
+          const da = new Date(a.sessionDate).getTime()
+          const db = new Date(b.sessionDate).getTime()
+          return isNaN(da) || isNaN(db) ? 0 : da - db
+        })
+      })).sort((a, b) => {
+        const da = new Date(a.date).getTime()
+        const db = new Date(b.date).getTime()
+        return isNaN(da) || isNaN(db) ? 0 : da - db
+      })
+
+      const totalTDS = mentorPayments.reduce((sum, p) => sum + (p.tdsAmount || 0), 0)
+
+      return {
+        mentorName,
+        totalTDS,
+        dates
+      }
+    }).sort((a, b) => a.mentorName.localeCompare(b.mentorName))
+
+    return result
+  }
+
   const dateData = groupByDate(tdsPayments || [])
+  const mentorData = groupByMentor(tdsPayments || [])
   const totalTDS = dateData.reduce((sum, d) => sum + d.totalTDS, 0)
 
   const handleSelectAll = (checked: boolean) => {
@@ -125,19 +180,16 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
   }
 
   const handleMarkSelectedAsPaid = async () => {
-    if (selectedDates.size === 0 || !onMarkMentorPaid) return
+    if (selectedDates.size === 0) return
     
     setProcessing(true)
     try {
       for (const date of Array.from(selectedDates)) {
-        const dateGroup = dateData.find(d => d.date === date)
-        if (dateGroup) {
-          // Mark each mentor's TDS as paid for this date
-          for (const mentor of dateGroup.mentors) {
-            const paymentIds = mentor.payments.map(p => `tds_${p.sNo}`)
-            await onMarkMentorPaid(mentor.mentorName, paymentIds)
-          }
-        }
+        await fetch('/api/payments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'markTdsDatePaid', dateOfPayment: date })
+        })
       }
       setSelectedDates(new Set())
     } catch (error) {
@@ -148,18 +200,13 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
   }
 
   const handleMarkIndividualDateAsPaid = async (date: string) => {
-    if (!onMarkMentorPaid) return
-    
     setProcessing(true)
     try {
-      const dateGroup = dateData.find(d => d.date === date)
-      if (dateGroup) {
-        // Mark each mentor's TDS as paid for this date
-        for (const mentor of dateGroup.mentors) {
-          const paymentIds = mentor.payments.map(p => `tds_${p.sNo}`)
-          await onMarkMentorPaid(mentor.mentorName, paymentIds)
-        }
-      }
+      await fetch('/api/payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'markTdsDatePaid', dateOfPayment: date })
+      })
     } catch (error) {
       console.error('Error marking TDS payment as paid:', error)
     } finally {
@@ -195,26 +242,44 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
         </div>
       )}
 
-      {!loading && dateData.length > 0 && (
+      {!loading && (groupMode === 'date' ? dateData.length > 0 : mentorData.length > 0) && (
         <>
           {/* Actions Bar */}
           <div className="flex justify-between items-center">
             <div className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                checked={selectedDates.size === dateData.length && dateData.length > 0}
-                onChange={(e) => handleSelectAll(e.target.checked)}
-                className="rounded border-gray-300 text-primary focus:ring-primary"
-              />
-              <span className="text-sm text-gray-600">
-                {selectedDates.size > 0 
-                  ? `${selectedDates.size} date(s) selected`
-                  : `Select all (${dateData.length} dates)`
-                }
-              </span>
+              <div className="flex items-center space-x-2">
+                <button
+                  className={`text-xs px-2 py-1 rounded border ${groupMode === 'date' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
+                  onClick={() => setGroupMode('date')}
+                >
+                  Group by Date
+                </button>
+                <button
+                  className={`text-xs px-2 py-1 rounded border ${groupMode === 'mentor' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
+                  onClick={() => setGroupMode('mentor')}
+                >
+                  Group by Mentor
+                </button>
+              </div>
+              {groupMode === 'date' && (
+                <>
+                  <input
+                    type="checkbox"
+                    checked={selectedDates.size === dateData.length && dateData.length > 0}
+                    onChange={(e) => handleSelectAll(e.target.checked)}
+                    className="rounded border-gray-300 text-primary focus:ring-primary ml-3"
+                  />
+                  <span className="text-sm text-gray-600">
+                    {selectedDates.size > 0 
+                      ? `${selectedDates.size} date(s) selected`
+                      : `Select all (${dateData.length} dates)`
+                    }
+                  </span>
+                </>
+              )}
             </div>
             
-            {selectedDates.size > 0 && onMarkMentorPaid && (
+            {groupMode === 'date' && selectedDates.size > 0 && onMarkMentorPaid && (
               <Button
                 onClick={handleMarkSelectedAsPaid}
                 disabled={processing}
@@ -242,143 +307,263 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
             </Card>
           </div>
 
-          {/* Dates Table */}
-          <div className="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
-            <table className="min-w-full divide-y divide-gray-300">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
-                    <input
-                      type="checkbox"
-                      checked={selectedDates.size === dateData.length && dateData.length > 0}
-                      onChange={(e) => handleSelectAll(e.target.checked)}
-                      className="rounded border-gray-300 text-primary focus:ring-primary"
-                    />
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Payment Date
-                  </th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Mentors
-                  </th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Payments
-                  </th>
-                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Total TDS
-                  </th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {dateData.map((dateGroup) => (
-                  <>
-                    <tr key={dateGroup.date} className="hover:bg-gray-50">
-                      <td className="px-3 py-3 whitespace-nowrap">
-                        <input
-                          type="checkbox"
-                          checked={selectedDates.has(dateGroup.date)}
-                          onChange={(e) => handleSelectDate(dateGroup.date, e.target.checked)}
-                          className="rounded border-gray-300 text-primary focus:ring-primary"
-                        />
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <button
-                            onClick={() => toggleDateExpansion(dateGroup.date)}
-                            className="mr-2 p-1 hover:bg-gray-100 rounded"
+          {/* Tables */}
+          {groupMode === 'date' ? (
+            <div className="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
+              <table className="min-w-full divide-y divide-gray-300">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
+                      <input
+                        type="checkbox"
+                        checked={selectedDates.size === dateData.length && dateData.length > 0}
+                        onChange={(e) => handleSelectAll(e.target.checked)}
+                        className="rounded border-gray-300 text-primary focus:ring-primary"
+                      />
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Payment Date
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Mentors
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Payments
+                    </th>
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Total TDS
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {dateData.map((dateGroup) => (
+                    <>
+                      <tr key={dateGroup.date} className="hover:bg-gray-50">
+                        <td className="px-3 py-3 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={selectedDates.has(dateGroup.date)}
+                            onChange={(e) => handleSelectDate(dateGroup.date, e.target.checked)}
+                            className="rounded border-gray-300 text-primary focus:ring-primary"
+                          />
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <div className="flex items-center">
+                            <button
+                              onClick={() => toggleDateExpansion(dateGroup.date)}
+                              className="mr-2 p-1 hover:bg-gray-100 rounded"
+                            >
+                              {expandedDates.has(dateGroup.date) ? (
+                                <ChevronDown className="w-4 h-4" />
+                              ) : (
+                                <ChevronRight className="w-4 h-4" />
+                              )}
+                            </button>
+                            <div className="text-sm font-medium text-gray-900">{dateGroup.date}</div>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900 text-center">
+                          {dateGroup.mentors.length}
+                        </td>
+                        <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900 text-center">
+                          {dateGroup.allPayments.length}
+                        </td>
+                        <td className="px-3 py-3 whitespace-nowrap text-right">
+                          <div className="text-sm font-bold text-red-600">
+                            {formatter.format(dateGroup.totalTDS)}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 whitespace-nowrap">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={processing}
+                            onClick={() => handleMarkIndividualDateAsPaid(dateGroup.date)}
+                            className="bg-green-600 text-white border-green-600 hover:bg-green-700 text-xs px-2 py-1"
                           >
-                            {expandedDates.has(dateGroup.date) ? (
-                              <ChevronDown className="w-4 h-4" />
-                            ) : (
-                              <ChevronRight className="w-4 h-4" />
-                            )}
-                          </button>
-                          <div className="text-sm font-medium text-gray-900">{dateGroup.date}</div>
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900 text-center">
-                        {dateGroup.mentors.length}
-                      </td>
-                      <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900 text-center">
-                        {dateGroup.allPayments.length}
-                      </td>
-                      <td className="px-3 py-3 whitespace-nowrap text-right">
-                        <div className="text-sm font-bold text-red-600">
-                          {formatter.format(dateGroup.totalTDS)}
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 whitespace-nowrap">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={processing}
-                          onClick={() => handleMarkIndividualDateAsPaid(dateGroup.date)}
-                          className="bg-green-600 text-white border-green-600 hover:bg-green-700 text-xs px-2 py-1"
-                        >
-                          <Check className="w-3 h-3 mr-1" />
-                          Mark Paid
-                        </Button>
-                      </td>
-                    </tr>
-                    
-                    {/* Expanded Details */}
-                    {expandedDates.has(dateGroup.date) && (
-                      <tr>
-                        <td colSpan={6} className="px-6 py-4 bg-gray-50">
-                          <div className="space-y-4">
-                            <h4 className="text-sm font-medium text-gray-900 mb-2">TDS Breakdown by Mentor</h4>
-                            
-                            {/* Mentor Summary */}
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                              {dateGroup.mentors.map((mentor) => (
-                                <div key={mentor.mentorName} className="bg-white p-3 rounded border">
-                                  <div className="text-sm font-medium text-gray-900">{mentor.mentorName}</div>
-                                  <div className="text-xs text-gray-500">{mentor.payments.length} sessions</div>
-                                  <div className="text-sm font-bold text-red-600 mt-1">{formatter.format(mentor.totalTDS)}</div>
-                                </div>
-                              ))}
-                            </div>
-
-                            {/* Detailed Session Table */}
-                            <h4 className="text-sm font-medium text-gray-900 mb-2">Session Details</h4>
-                            <div className="overflow-x-auto">
-                              <table className="min-w-full divide-y divide-gray-200">
-                                <thead className="bg-gray-100">
-                                  <tr>
-                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Mentor</th>
-                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Mentee</th>
-                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Session Date</th>
-                                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Total Payout</th>
-                                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">TDS Amount</th>
-                                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Post-TDS</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="bg-white divide-y divide-gray-200">
-                                  {dateGroup.allPayments.map((payment) => (
-                                    <tr key={payment.sNo}>
-                                      <td className="px-3 py-2 text-xs text-gray-900">{payment.mentorName}</td>
-                                      <td className="px-3 py-2 text-xs text-gray-900">{payment.menteeName}</td>
-                                      <td className="px-3 py-2 text-xs text-gray-900">{payment.sessionDate}</td>
-                                      <td className="px-3 py-2 text-xs text-right text-gray-900">{formatter.format(payment.totalPayout)}</td>
-                                      <td className="px-3 py-2 text-xs text-right text-red-600">{formatter.format(payment.tdsAmount)}</td>
-                                      <td className="px-3 py-2 text-xs text-right text-green-600">{formatter.format(payment.postTdsAmount)}</td>
+                            <Check className="w-3 h-3 mr-1" />
+                            Mark Paid
+                          </Button>
+                        </td>
+                      </tr>
+                      
+                      {/* Expanded Details */}
+                      {expandedDates.has(dateGroup.date) && (
+                        <tr>
+                          <td colSpan={6} className="px-6 py-4 bg-gray-50">
+                            <div className="space-y-4">
+                              <h4 className="text-sm font-medium text-gray-900 mb-2">TDS Breakdown by Mentor</h4>
+                              
+                              {/* Mentor Summary */}
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                {dateGroup.mentors.map((mentor) => (
+                                  <div key={mentor.mentorName} className="bg-white p-3 rounded border">
+                                    <div className="text-sm font-medium text-gray-900">{mentor.mentorName}</div>
+                                    <div className="text-xs text-gray-500">{mentor.payments.length} sessions</div>
+                                    <div className="text-sm font-bold text-red-600 mt-1">{formatter.format(mentor.totalTDS)}</div>
+                                  </div>
+                                ))}
+                              </div>
+                              
+                              {/* Detailed Session Table */}
+                              <h4 className="text-sm font-medium text-gray-900 mb-2">Session Details</h4>
+                              <div className="overflow-x-auto">
+                                <table className="min-w-full divide-y divide-gray-200">
+                                  <thead className="bg-gray-100">
+                                    <tr>
+                                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Mentor</th>
+                                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Mentee</th>
+                                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Session Date</th>
+                                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Total Payout</th>
+                                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">TDS Amount</th>
+                                      <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Post-TDS</th>
                                     </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+                                  </thead>
+                                  <tbody className="bg-white divide-y divide-gray-200">
+                                    {dateGroup.allPayments.map((payment) => (
+                                      <tr key={payment.sNo}>
+                                        <td className="px-3 py-2 text-xs text-gray-900">{payment.mentorName}</td>
+                                        <td className="px-3 py-2 text-xs text-gray-900">{payment.menteeName}</td>
+                                        <td className="px-3 py-2 text-xs text-gray-900">{payment.sessionDate}</td>
+                                        <td className="px-3 py-2 text-xs text-right text-gray-900">{formatter.format(payment.totalPayout)}</td>
+                                        <td className="px-3 py-2 text-xs text-right text-red-600">{formatter.format(payment.tdsAmount)}</td>
+                                        <td className="px-3 py-2 text-xs text-right text-green-600">{formatter.format(payment.postTdsAmount)}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
                             </div>
+                          </td>
+                    </tr>
+                      )}
+                    </>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
+              <table className="min-w-full divide-y divide-gray-300">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Mentor
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Dates
+                    </th>
+                    <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Total TDS
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {mentorData.map((mentorGroup) => (
+                    <>
+                      <tr key={mentorGroup.mentorName} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <div className="flex items-center">
+                            <button
+                              onClick={() => {
+                                const s = new Set(expandedMentors)
+                                s.has(mentorGroup.mentorName) ? s.delete(mentorGroup.mentorName) : s.add(mentorGroup.mentorName)
+                                setExpandedMentors(s)
+                              }}
+                              className="mr-2 p-1 hover:bg-gray-100 rounded"
+                            >
+                              {expandedMentors.has(mentorGroup.mentorName) ? (
+                                <ChevronDown className="w-4 h-4" />
+                              ) : (
+                                <ChevronRight className="w-4 h-4" />
+                              )}
+                            </button>
+                            <div className="text-sm font-medium text-gray-900">{mentorGroup.mentorName}</div>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900">
+                          {mentorGroup.dates.length}
+                        </td>
+                        <td className="px-3 py-3 whitespace-nowrap text-right">
+                          <div className="text-sm font-bold text-red-600">
+                            {formatter.format(mentorGroup.totalTDS)}
                           </div>
                         </td>
                       </tr>
-                    )}
-                  </>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      {expandedMentors.has(mentorGroup.mentorName) && (
+                        <tr>
+                          <td colSpan={3} className="px-6 py-4 bg-gray-50">
+                            <div className="space-y-4">
+                              <h4 className="text-sm font-medium text-gray-900 mb-2">TDS Dates for {mentorGroup.mentorName}</h4>
+                              <div className="space-y-3">
+                                {mentorGroup.dates.map((dg) => (
+                                  <div key={`${mentorGroup.mentorName}-${dg.date}`} className="bg-white border rounded">
+                                    <div className="flex items-center justify-between px-3 py-2 border-b">
+                                      <div className="text-sm font-medium text-gray-900">{dg.date}</div>
+                                      <div className="flex items-center space-x-3">
+                                        <div className="text-sm font-bold text-red-600">{formatter.format(dg.totalTDS)}</div>
+                                        {onMarkMentorPaid && (
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            disabled={processing}
+                                            onClick={async () => {
+                                              try {
+                                                setProcessing(true)
+                                                const ids = dg.payments.map(p => `tds_${p.sNo}`)
+                                                await onMarkMentorPaid(mentorGroup.mentorName, ids)
+                                              } finally {
+                                                setProcessing(false)
+                                              }
+                                            }}
+                                            className="bg-green-600 text-white border-green-600 hover:bg-green-700 text-xs px-2 py-1"
+                                          >
+                                            <Check className="w-3 h-3 mr-1" />
+                                            Mark Paid
+                                          </Button>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                      <table className="min-w-full divide-y divide-gray-200">
+                                        <thead className="bg-gray-100">
+                                          <tr>
+                                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Mentee</th>
+                                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Session Date</th>
+                                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Total Payout</th>
+                                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">TDS Amount</th>
+                                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Post-TDS</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="bg-white divide-y divide-gray-200">
+                                          {dg.payments.map((p) => (
+                                            <tr key={p.sNo}>
+                                              <td className="px-3 py-2 text-xs text-gray-900">{p.menteeName}</td>
+                                              <td className="px-3 py-2 text-xs text-gray-900">{p.sessionDate}</td>
+                                              <td className="px-3 py-2 text-xs text-right text-gray-900">{formatter.format(p.totalPayout)}</td>
+                                              <td className="px-3 py-2 text-xs text-right text-red-600">{formatter.format(p.tdsAmount)}</td>
+                                              <td className="px-3 py-2 text-xs text-right text-green-600">{formatter.format(p.postTdsAmount)}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
     </div>
