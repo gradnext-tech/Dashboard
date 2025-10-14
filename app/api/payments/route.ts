@@ -197,63 +197,28 @@ async function generateSimpleInvoicePDF(params: {
   
   let browser
   try {
-    // Prefer serverless-compatible Chromium in production/server
+    // Follow the safe pattern exactly as recommended
     const { default: chromium } = await import('@sparticuz/chromium')
     const { default: puppeteerCore } = await import('puppeteer-core')
 
-    // Resolve executable path
-    let executablePath = process.env.CHROME_PATH || await chromium.executablePath()
-
-    // In local/dev, chromium.executablePath() may be null; try common Chrome paths
-    if (!executablePath) {
-      const os = process.platform
-      const candidates = os === 'darwin'
-        ? [
-            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-            '/Applications/Chromium.app/Contents/MacOS/Chromium'
-          ]
-        : os === 'linux'
-        ? [
-            '/usr/bin/google-chrome',
-            '/usr/bin/chromium-browser',
-            '/usr/bin/chromium'
-          ]
-        : [
-            'C:/Program Files/Google/Chrome/Application/chrome.exe',
-            'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'
-          ]
-
-      const fsMod = await import('fs')
-      for (const p of candidates) {
-        try {
-          if (fsMod.existsSync(p)) { executablePath = p; break }
-        } catch {}
-      }
-    }
-
-    if (!executablePath) {
-      throw new Error('Chromium executable not found. Set CHROME_PATH or install Google Chrome locally.')
-    }
-
-    // Choose args: serverless chromium vs local installed Chrome
-    const isLocalChrome = /Google Chrome|Chromium|chrome\.exe/i.test(executablePath)
-    const launchArgs = isLocalChrome
-      ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--hide-scrollbars']
-      : [...chromium.args, '--hide-scrollbars']
-
+    // Use the recommended safe pattern
     browser = await puppeteerCore.launch({
-      args: launchArgs,
-      defaultViewport: { width: 800, height: 600 }, // Smaller viewport for faster rendering
-      executablePath,
+      args: chromium.args,
+      executablePath: await chromium.executablePath(),
       headless: true,
-      timeout: 30000, // 30 second browser launch timeout
     })
-    
+
+    // Make sure page is fully created before calling any methods
     const page = await browser.newPage()
-    // Use data URL approach to completely avoid main frame race conditions
+    
+    // Add short delay to allow frame initialization as recommended
+    await new Promise(r => setTimeout(r, 100))
+    
+    // Create data URL for the HTML content to avoid external navigation
     const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`
-    await page.goto(dataUrl, { waitUntil: 'domcontentloaded', timeout: 15000 })
-    await page.waitForSelector('body', { timeout: 5000 })
+    
+    // Use goto with the data URL
+    await page.goto(dataUrl, { waitUntil: 'networkidle0' })
     
     // Generate PDF
     const pdfBuffer = await page.pdf({
