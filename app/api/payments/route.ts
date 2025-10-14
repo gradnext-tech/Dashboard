@@ -248,16 +248,9 @@ async function generateSimpleInvoicePDF(params: {
     })
     
     const page = await browser.newPage()
-    // Give Chromium a brief moment to fully initialize the main frame
-    await new Promise(res => setTimeout(res, 100))
-    // Try setContent first; if it races with main frame init, fall back to data URL
-    try {
-      await page.setContent(htmlContent, { waitUntil: 'domcontentloaded' })
-    } catch (e) {
-      // Fallback path to avoid main frame timing issues
-      const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`
-      await page.goto(dataUrl, { waitUntil: 'domcontentloaded' })
-    }
+    // Use data URL approach to completely avoid main frame race conditions
+    const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`
+    await page.goto(dataUrl, { waitUntil: 'domcontentloaded' })
     await page.waitForSelector('body')
     
     // Generate PDF
