@@ -248,7 +248,12 @@ async function generateSimpleInvoicePDF(params: {
     })
     
     const page = await browser.newPage()
-    await page.setContent(htmlContent, { waitUntil: 'networkidle0' })
+    // In some serverless environments, setContent can race with main frame init.
+    // Navigate to a blank page first, then set content with a less strict waitUntil.
+    await page.goto('about:blank')
+    await new Promise(res => setTimeout(res, 50))
+    await page.setContent(htmlContent, { waitUntil: 'domcontentloaded' })
+    await page.waitForSelector('body')
     
     // Generate PDF
     const pdfBuffer = await page.pdf({
