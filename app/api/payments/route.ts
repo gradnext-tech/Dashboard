@@ -454,9 +454,91 @@ export async function POST(request: NextRequest) {
         )
       }
       try {
+        // 1) Normalize the target date consistently with Sheets logic
+        const normalizeDate = (dateStr: string): string => {
+          try {
+            const d = new Date((dateStr || '').toString().trim())
+            return isNaN(d.getTime()) ? (dateStr || '').toString().trim() : d.toLocaleDateString('en-IN')
+          } catch {
+            return (dateStr || '').toString().trim()
+          }
+        }
+        const targetDate = normalizeDate(dateOfPayment)
+
+        // 2) Capture eligible TDS rows for that date BEFORE we set the paid tag
+        //    (the unpaid list excludes rows already tagged as Paid in Column P)
+        const allTdsPayments = await googleSheetsService.getTDSPaymentsFromMentorCommissionSheet()
+        const rowsForDate = allTdsPayments.filter(p => normalizeDate(p.dateOfPayment) === targetDate)
+
+        // 3) Group rows by mentor for per-mentor invoice generation
+        const byMentor = new Map<string, typeof rowsForDate>()
+        rowsForDate.forEach(r => {
+          const key = r.mentorName.toLowerCase().trim()
+          const arr = byMentor.get(key) || []
+          arr.push(r)
+          byMentor.set(key, arr)
+        })
+
+        // 4) Mark as Paid on the sheet (Column P) for that date
         const result = await googleSheetsService.markTDSPaymentsByDateAsPaid(dateOfPayment)
         console.log('markTDSPaymentsByDateAsPaid result:', result)
-        return NextResponse.json({ success: true, result })
+
+        // 5) For each mentor, generate and upload TDS invoice and add summary row
+        if (byMentor.size > 0) {
+          const mentorDetails = await googleSheetsService.getMentorDetails()
+          for (const [key, items] of Array.from(byMentor.entries())) {
+            const mentorName = (items as any[])[0].mentorName
+
+            const totalAmount = (items as any[]).reduce((s: number, p: any) => s + (p.totalPayout || 0), 0)
+            const tdsPaid = (items as any[]).reduce((s: number, p: any) => s + (p.tdsAmount || 0), 0)
+            const postTdsAmount = (items as any[]).reduce((s: number, p: any) => s + (p.postTdsAmount || 0), 0)
+            const totalSessions = (items as any[]).reduce((s: number, p: any) => s + (p.noOfSessions || 0), 0)
+            const ratePerSession = totalSessions > 0 ? totalAmount / totalSessions : 0
+
+            // Mentor contact/PAN
+            const detail = mentorDetails.find(d => d.mentorName.toLowerCase().trim() === key)
+            const mentorEmail = detail?.email || 'N/A'
+            const mentorPhone = detail?.phone || 'N/A'
+            const pan = await googleSheetsService.getMentorPAN(mentorName)
+
+            // Invoice number per mentor (TDS counter)
+            const tdsInvoiceCount = await googleSheetsService.getTDSInvoiceCountForMentor(mentorName)
+            const nameParts = mentorName.trim().split(/\s+/)
+            const firstInitial = nameParts[0]?.charAt(0).toUpperCase() || 'X'
+            const lastInitial = nameParts[nameParts.length - 1]?.charAt(0).toUpperCase() || 'X'
+            const invoiceNumber = `${firstInitial}${lastInitial}-TDS-${String(tdsInvoiceCount + 1).padStart(3, '0')}`
+
+            // Generate PDF with Date of Payment as invoice date
+            const invoiceBuffer = await generateSimpleInvoicePDF({
+              invoiceNumber,
+              mentorName,
+              pan,
+              mentorEmail,
+              mentorPhone,
+              totalSessions,
+              ratePerSession,
+              totalAmount,
+              dateOfPayment: targetDate
+            })
+
+            // Upload to Drive and record in TDS summary sheet
+            const fileName = `TDS_Invoice_${invoiceNumber}_${mentorName.replace(/\s+/g, '_')}.pdf`
+            const invoiceLink = await googleSheetsService.uploadInvoiceToDrive(invoiceBuffer, fileName)
+            await googleSheetsService.addTDSSummaryRecord({
+              dateOfPayment: targetDate,
+              invoiceNumber,
+              mentorName, // Column header in sheet may read "Vendor/Mentor Name"
+              panNumber: pan || '',
+              totalAmount,
+              tdsPaid,
+              postTdsAmount,
+              tdsStatus: 'Paid',
+              invoiceLink
+            })
+          }
+        }
+
+        return NextResponse.json({ success: true, result, processedMentors: byMentor.size })
       } catch (error) {
         console.error('Error in markTDSPaymentsByDateAsPaid:', error)
         return NextResponse.json(
