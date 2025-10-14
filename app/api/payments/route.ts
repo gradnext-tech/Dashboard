@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 // Ensure this route is always dynamic and never cached
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
+export const maxDuration = 60 // Extend timeout to 60 seconds for PDF generation
 import { googleSheetsService } from '@/lib/google-sheets'
 import nodemailer from 'nodemailer'
 
@@ -242,16 +243,17 @@ async function generateSimpleInvoicePDF(params: {
 
     browser = await puppeteerCore.launch({
       args: launchArgs,
-      defaultViewport: { width: 1200, height: 800 },
+      defaultViewport: { width: 800, height: 600 }, // Smaller viewport for faster rendering
       executablePath,
       headless: true,
+      timeout: 30000, // 30 second browser launch timeout
     })
     
     const page = await browser.newPage()
     // Use data URL approach to completely avoid main frame race conditions
     const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`
-    await page.goto(dataUrl, { waitUntil: 'domcontentloaded' })
-    await page.waitForSelector('body')
+    await page.goto(dataUrl, { waitUntil: 'domcontentloaded', timeout: 15000 })
+    await page.waitForSelector('body', { timeout: 5000 })
     
     // Generate PDF
     const pdfBuffer = await page.pdf({
