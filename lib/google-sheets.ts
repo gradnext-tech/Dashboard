@@ -1735,6 +1735,16 @@ class GoogleSheetsService {
         return []
       }
 
+      // Helper to robustly parse numbers from cells that may contain currency formatting
+      const parseNumberCell = (value: any): number => {
+        if (value === undefined || value === null) return 0
+        const raw = String(value).trim()
+        if (!raw) return 0
+        const cleaned = raw.replace(/[^0-9.\-]/g, '')
+        const num = Number(cleaned)
+        return Number.isFinite(num) ? num : 0
+      }
+
       // Skip header row and filter only rows where:
       // - TDS Paid column (M) has actual data
       // - Date of Payment column (O) has a valid date
@@ -1752,7 +1762,7 @@ class GoogleSheetsService {
             return null
           }
           
-          const tdsAmount = parseFloat(tdsAmountCell)
+          const tdsAmount = parseNumberCell(tdsAmountCell)
           
           // Also check if the parsed TDS amount is a valid positive number
           if (isNaN(tdsAmount) || tdsAmount <= 0) return null
@@ -1789,13 +1799,13 @@ class GoogleSheetsService {
             menteeName: row[2]?.toString() || '',
             sessionDate: row[3]?.toString() || '',
             sessionStatus: row[4]?.toString() || '',
-            rate: parseFloat(row[5]) || 0,
+            rate: parseNumberCell(row[5]),
             paymentStatus: row[6]?.toString() || 'Paid',
-            noOfSessions: parseInt(row[7]) || 0,
-            totalPayout: parseFloat(row[8]) || 0,
-            tdsPercentage: parseFloat(row[11]) || 0.10, // Column L: TDS %
+            noOfSessions: parseInt(String(row[7])) || 0,
+            totalPayout: parseNumberCell(row[8]),
+            tdsPercentage: (() => { const v = parseNumberCell(row[11]); return v > 1 ? v/100 : v || 0.10 })(), // accept 10 or 0.10
             tdsAmount: tdsAmount, // Column M: TDS Paid
-            postTdsAmount: parseFloat(row[13]) || 0, // Column N: Post TDS
+            postTdsAmount: parseNumberCell(row[13]), // Column N: Post TDS
             dateOfPayment: dateString // Column O: Date of Payment (normalized)
           }
         })
