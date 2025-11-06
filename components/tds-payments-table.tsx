@@ -46,16 +46,24 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
   const [groupMode, setGroupMode] = useState<'date' | 'mentor'>('date')
   const [expandedMentors, setExpandedMentors] = useState<Set<string>>(new Set())
 
-  // Normalize date for consistent grouping
+  // Normalize date for consistent grouping - ALWAYS treat as DD/MM/YYYY (en-IN format)
   const normalizeDateKey = (dateStr: string): string => {
     if (!dateStr) return ''
-    try {
-      const date = new Date(dateStr)
-      if (isNaN(date.getTime())) return dateStr
-      return date.toLocaleDateString('en-IN')
-    } catch {
-      return dateStr
+    const trimmed = dateStr.toString().trim()
+    
+    // Parse as DD/MM/YYYY format (en-IN standard) - never use Date() constructor
+    const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/)
+    if (ddmmyyyyMatch) {
+      const day = ddmmyyyyMatch[1].padStart(2, '0')
+      const month = ddmmyyyyMatch[2].padStart(2, '0')
+      let year = ddmmyyyyMatch[3]
+      if (year.length === 2) year = `20${year}`
+      // Return in DD/MM/YYYY format
+      return `${day}/${month}/${year}`
     }
+    
+    // If regex doesn't match, return original string
+    return trimmed
   }
 
   // Group by Date of Payment, then by Mentor

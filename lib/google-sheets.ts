@@ -1640,20 +1640,25 @@ class GoogleSheetsService {
         return false
       }
 
-      // Normalize dates to en-IN locale format (DD/MM/YYYY) for consistent comparison
+      // Normalize dates to DD/MM/YYYY format for consistent comparison
+      // ALWAYS treat dates as DD/MM/YYYY (en-IN format) - never use Date() constructor which interprets as MM/DD/YYYY
       const normalizeDate = (dateStr: string): string => {
         if (!dateStr) return ''
         const trimmed = dateStr.toString().trim()
         
-        // Try to parse the date
-        const date = new Date(trimmed)
-        if (isNaN(date.getTime())) {
-          // If parsing fails, return the original string
-          return trimmed
+        // Parse as DD/MM/YYYY format (en-IN standard)
+        const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/)
+        if (ddmmyyyyMatch) {
+          const day = ddmmyyyyMatch[1].padStart(2, '0')
+          const month = ddmmyyyyMatch[2].padStart(2, '0')
+          let year = ddmmyyyyMatch[3]
+          if (year.length === 2) year = `20${year}`
+          // Return in DD/MM/YYYY format
+          return `${day}/${month}/${year}`
         }
         
-        // Format to DD/MM/YYYY using en-IN locale
-        return date.toLocaleDateString('en-IN')
+        // If regex doesn't match, return original string (don't use Date() constructor as it will misinterpret DD/MM as MM/DD)
+        return trimmed
       }
 
       const targetDate = normalizeDate((dateOfPayment || '').toString().trim())
