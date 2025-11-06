@@ -45,6 +45,7 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set())
   const [groupMode, setGroupMode] = useState<'date' | 'mentor'>('date')
   const [expandedMentors, setExpandedMentors] = useState<Set<string>>(new Set())
+  const [selectedMonth, setSelectedMonth] = useState<string>('') // Format: "YYYY-MM" or empty for all
 
   // Normalize date for consistent grouping - ALWAYS treat as DD/MM/YYYY (en-IN format)
   const normalizeDateKey = (dateStr: string): string => {
@@ -65,6 +66,29 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
     // If regex doesn't match, return original string
     return trimmed
   }
+
+  // Extract month/year from dateOfPayment (DD/MM/YYYY format) to YYYY-MM
+  const getMonthYear = (dateStr: string): string => {
+    const normalized = normalizeDateKey(dateStr)
+    const match = normalized.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+    if (match) {
+      const day = match[1]
+      const month = match[2]
+      const year = match[3]
+      return `${year}-${month}` // Return as YYYY-MM
+    }
+    return ''
+  }
+
+  // Filter payments by selected month
+  const filteredPayments = selectedMonth
+    ? tdsPayments.filter(payment => getMonthYear(payment.dateOfPayment) === selectedMonth)
+    : tdsPayments
+
+  // Get unique months from all payments for the dropdown
+  const availableMonths = Array.from(
+    new Set(tdsPayments.map(p => getMonthYear(p.dateOfPayment)).filter(Boolean))
+  ).sort((a, b) => b.localeCompare(a)) // Sort descending (newest first)
 
   // Group by Date of Payment, then by Mentor
   const groupByDate = (payments: TDSPayment[]): DateTDSData[] => {
@@ -165,9 +189,17 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
     return result
   }
 
-  const dateData = groupByDate(tdsPayments || [])
-  const mentorData = groupByMentor(tdsPayments || [])
+  const dateData = groupByDate(filteredPayments || [])
+  const mentorData = groupByMentor(filteredPayments || [])
   const totalTDS = dateData.reduce((sum, d) => sum + d.totalTDS, 0)
+
+  // Format month for display (YYYY-MM -> "Month YYYY")
+  const formatMonthDisplay = (monthStr: string): string => {
+    if (!monthStr) return 'All Months'
+    const [year, month] = monthStr.split('-')
+    const date = new Date(parseInt(year), parseInt(month) - 1, 1)
+    return date.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
+  }
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -245,8 +277,12 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
           <div className="mx-auto w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mb-4">
             <Check className="w-12 h-12 text-green-600" />
           </div>
-          <h3 className="text-lg font-medium text-gray-900 mb-2">All caught up!</h3>
-          <p className="text-gray-500">No TDS payments pending.</p>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">
+            {selectedMonth ? 'No TDS payments found for selected month' : 'All caught up!'}
+          </h3>
+          <p className="text-gray-500">
+            {selectedMonth ? 'Try selecting a different month or clear the filter.' : 'No TDS payments pending.'}
+          </p>
         </div>
       )}
 
@@ -268,6 +304,28 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
                 >
                   Group by Mentor
                 </button>
+              </div>
+              {/* Month Filter */}
+              <div className="flex items-center space-x-2 ml-4">
+                <label htmlFor="month-filter" className="text-sm text-gray-600 whitespace-nowrap">
+                  Filter by Month:
+                </label>
+                <select
+                  id="month-filter"
+                  value={selectedMonth}
+                  onChange={(e) => {
+                    setSelectedMonth(e.target.value)
+                    setSelectedDates(new Set()) // Clear date selections when month changes
+                  }}
+                  className="text-sm px-3 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">All Months</option>
+                  {availableMonths.map(month => (
+                    <option key={month} value={month}>
+                      {formatMonthDisplay(month)}
+                    </option>
+                  ))}
+                </select>
               </div>
               {groupMode === 'date' && (
                 <>
