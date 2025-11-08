@@ -23,20 +23,46 @@ async function generateSimpleInvoicePDF(params: {
   const { invoiceNumber, mentorName, pan, mentorEmail, mentorPhone, totalSessions, ratePerSession, totalAmount, dateOfPayment } = params
   
   console.log('Generating PDF using Puppeteer...')
+  console.log('Invoice params:', {
+    invoiceNumber,
+    mentorName,
+    totalSessions,
+    ratePerSession,
+    totalAmount,
+    dateOfPayment
+  })
   
   // Dynamic imports to avoid webpack bundling issues
   const puppeteer = await import('puppeteer-core')
   const chromium = await import('@sparticuz/chromium')
   
+  // Ensure all values are properly parsed as numbers
+  const parsedTotalAmount = Number(totalAmount) || 0
+  const parsedTotalSessions = Number(totalSessions) || 0
+  const parsedRatePerSession = Number(ratePerSession) || 0
+  
+  console.log('Parsed values:', {
+    parsedTotalAmount,
+    parsedTotalSessions,
+    parsedRatePerSession
+  })
+  
   // Compute robust values to avoid 0s when inputs are missing/rounded
-  const safeTotalAmount = Number.isFinite(totalAmount) && totalAmount > 0 ? totalAmount : 0
-  const computedQuantity = Number.isFinite(totalSessions) && totalSessions > 0
-    ? Math.floor(totalSessions)
+  const safeTotalAmount = Number.isFinite(parsedTotalAmount) && parsedTotalAmount > 0 ? parsedTotalAmount : 0
+  const computedQuantity = Number.isFinite(parsedTotalSessions) && parsedTotalSessions > 0
+    ? Math.floor(parsedTotalSessions)
     : (safeTotalAmount > 0 ? 1 : 0)
   const computedRate = computedQuantity > 0
-    ? ((Number.isFinite(ratePerSession) && ratePerSession > 0) ? ratePerSession : (safeTotalAmount / computedQuantity))
-    : 0
+    ? ((Number.isFinite(parsedRatePerSession) && parsedRatePerSession > 0) ? parsedRatePerSession : (safeTotalAmount / computedQuantity))
+    : (safeTotalAmount > 0 ? safeTotalAmount : 0)
   const computedAmount = safeTotalAmount > 0 ? safeTotalAmount : (computedQuantity * computedRate)
+  
+  console.log('Computed values for invoice:', {
+    safeTotalAmount,
+    computedQuantity,
+    computedRate,
+    computedAmount
+  })
 
   // Create HTML content for the invoice
   const htmlContent = `
@@ -456,21 +482,40 @@ export async function POST(request: NextRequest) {
 
         // 5) For each mentor, generate and upload TDS invoice and add summary row
         if (byMentor.size > 0) {
+          console.log(`Processing ${byMentor.size} mentors for TDS invoice generation`)
           const mentorDetails = await googleSheetsService.getMentorDetails()
           for (const [key, items] of Array.from(byMentor.entries())) {
             const mentorName = (items as any[])[0].mentorName
+            console.log(`Processing mentor: ${mentorName}, items count: ${items.length}`)
 
-            const totalAmount = (items as any[]).reduce((s: number, p: any) => s + (p.totalPayout || 0), 0)
-            const tdsPaid = (items as any[]).reduce((s: number, p: any) => s + (p.tdsAmount || 0), 0)
-            const postTdsAmount = (items as any[]).reduce((s: number, p: any) => s + (p.postTdsAmount || 0), 0)
-            const totalSessions = (items as any[]).reduce((s: number, p: any) => s + (p.noOfSessions || 0), 0)
-            const ratePerSession = totalSessions > 0 ? totalAmount / totalSessions : 0
+            // Calculate totals from TDS payment records
+            const totalAmount = (items as any[]).reduce((s: number, p: any) => {
+              const payout = Number(p.totalPayout) || 0
+              console.log(`  Payment totalPayout: ${payout}`)
+              return s + payout
+            }, 0)
+            const tdsPaid = (items as any[]).reduce((s: number, p: any) => {
+              const tds = Number(p.tdsAmount) || 0
+              return s + tds
+            }, 0)
+            const postTdsAmount = (items as any[]).reduce((s: number, p: any) => {
+              const postTds = Number(p.postTdsAmount) || 0
+              return s + postTds
+            }, 0)
+            const totalSessions = (items as any[]).reduce((s: number, p: any) => {
+              const sessions = Number(p.noOfSessions) || 0
+              return s + sessions
+            }, 0)
+            const ratePerSession = totalSessions > 0 ? totalAmount / totalSessions : (totalAmount > 0 ? totalAmount : 0)
+
+            console.log(`  Calculated totals - totalAmount: ${totalAmount}, tdsPaid: ${tdsPaid}, postTdsAmount: ${postTdsAmount}, totalSessions: ${totalSessions}, ratePerSession: ${ratePerSession}`)
 
             // Mentor contact/PAN
             const detail = mentorDetails.find(d => d.mentorName.toLowerCase().trim() === key)
             const mentorEmail = detail?.email || 'N/A'
             const mentorPhone = detail?.phone || 'N/A'
             const pan = await googleSheetsService.getMentorPAN(mentorName)
+            console.log(`  Mentor details - email: ${mentorEmail}, phone: ${mentorPhone}, pan: ${pan}`)
 
             // Invoice number per mentor (TDS counter)
             const tdsInvoiceCount = await googleSheetsService.getTDSInvoiceCountForMentor(mentorName)
@@ -478,8 +523,10 @@ export async function POST(request: NextRequest) {
             const firstInitial = nameParts[0]?.charAt(0).toUpperCase() || 'X'
             const lastInitial = nameParts[nameParts.length - 1]?.charAt(0).toUpperCase() || 'X'
             const invoiceNumber = `${firstInitial}${lastInitial}-TDS-${String(tdsInvoiceCount + 1).padStart(3, '0')}`
+            console.log(`  Generated invoice number: ${invoiceNumber}`)
 
             // Generate PDF with Date of Payment as invoice date
+            console.log(`  Generating invoice PDF...`)
             const invoiceBuffer = await generateSimpleInvoicePDF({
               invoiceNumber,
               mentorName,
@@ -491,10 +538,15 @@ export async function POST(request: NextRequest) {
               totalAmount,
               dateOfPayment: targetDate
             })
+            console.log(`  Invoice PDF generated, size: ${invoiceBuffer.length} bytes`)
 
             // Upload to Drive and record in TDS summary sheet
             const fileName = `TDS_Invoice_${invoiceNumber}_${mentorName.replace(/\s+/g, '_')}.pdf`
+            console.log(`  Uploading invoice to Drive: ${fileName}`)
             const invoiceLink = await googleSheetsService.uploadInvoiceToDrive(invoiceBuffer, fileName)
+            console.log(`  Invoice uploaded, link: ${invoiceLink}`)
+
+            console.log(`  Adding TDS summary record...`)
             await googleSheetsService.addTDSSummaryRecord({
               dateOfPayment: targetDate,
               invoiceNumber,
@@ -506,7 +558,10 @@ export async function POST(request: NextRequest) {
               tdsStatus: 'Due', // Keep as Due - will be marked as Paid manually
               invoiceLink
             })
+            console.log(`  TDS summary record added successfully for ${mentorName}`)
           }
+        } else {
+          console.log('No mentors found for TDS invoice generation')
         }
 
         return NextResponse.json({ success: true, result, processedMentors: byMentor.size })

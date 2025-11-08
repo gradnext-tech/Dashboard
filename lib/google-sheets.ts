@@ -2161,14 +2161,25 @@ class GoogleSheetsService {
         data.invoiceLink                        // Invoice Link
       ]
 
+      console.log('Adding TDS summary record with data:', {
+        dateOfPayment: formatDateForSheets(data.dateOfPayment),
+        invoiceNumber: data.invoiceNumber,
+        mentorName: data.mentorName,
+        totalAmount: data.totalAmount,
+        tdsPaid: data.tdsPaid,
+        postTdsAmount: data.postTdsAmount
+      })
+
       // Use USER_ENTERED to allow Google Sheets to interpret dates and numbers properly
-      await this.sheets.spreadsheets.values.append({
+      const appendResult = await this.sheets.spreadsheets.values.append({
         spreadsheetId: mentorCommissionSheetId,
         range: 'TDS summary!A:I',
         valueInputOption: 'USER_ENTERED', // Changed from RAW to USER_ENTERED so dates are recognized
         insertDataOption: 'INSERT_ROWS',
-        requestBody: { values: [newRow] }
+        resource: { values: [newRow] }
       })
+
+      console.log('TDS summary record appended successfully:', appendResult.data)
     } catch (error) {
       console.error('Error adding TDS summary record:', error)
       throw error
