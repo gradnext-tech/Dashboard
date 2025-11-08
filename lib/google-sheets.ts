@@ -2051,9 +2051,24 @@ class GoogleSheetsService {
         throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
       }
 
+      // Find the correct sheet name (case-insensitive)
+      const spreadsheet = await this.sheets.spreadsheets.get({
+        spreadsheetId: mentorCommissionSheetId,
+      })
+      const sheets = spreadsheet.data.sheets || []
+      const tdsSummarySheet = sheets.find((sheet: any) => 
+        sheet.properties?.title?.toLowerCase() === 'tds summary'
+      )
+      
+      if (!tdsSummarySheet) {
+        return 0 // Sheet doesn't exist yet
+      }
+      
+      const sheetName = tdsSummarySheet.properties.title
+
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: mentorCommissionSheetId,
-        range: 'TDS summary!A:I'
+        range: `${sheetName}!A:I`
       })
 
       const rows = response.data.values || []
@@ -2084,10 +2099,12 @@ class GoogleSheetsService {
     invoiceLink: string
   }): Promise<void> {
     try {
+      console.log('addTDSSummaryRecord called with:', data)
       const mentorCommissionSheetId = process.env.MENTOR_COMMISSION_SHEET_ID
       if (!mentorCommissionSheetId) {
         throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
       }
+      console.log('Using spreadsheet ID:', mentorCommissionSheetId)
 
       // Helper function to format date for Google Sheets (ensures it's recognized as a date)
       const formatDateForSheets = (dateStr: string): string => {
@@ -2120,15 +2137,21 @@ class GoogleSheetsService {
         return trimmed
       }
 
-      // Ensure sheet exists by attempting to read; if missing, create with headers
-      let rows: any[] = []
-      try {
-        const read = await this.sheets.spreadsheets.values.get({
-          spreadsheetId: mentorCommissionSheetId,
-          range: 'TDS summary!A:I'
-        })
-        rows = read.data.values || []
-      } catch {
+      // First, get all sheets to find the correct TDS summary sheet name (case-insensitive)
+      const spreadsheet = await this.sheets.spreadsheets.get({
+        spreadsheetId: mentorCommissionSheetId,
+      })
+      const sheets = spreadsheet.data.sheets || []
+      const tdsSummarySheet = sheets.find((sheet: any) => 
+        sheet.properties?.title?.toLowerCase() === 'tds summary'
+      )
+      
+      let sheetName = 'TDS summary' // Default name
+      if (tdsSummarySheet) {
+        sheetName = tdsSummarySheet.properties.title // Use actual sheet name (case-sensitive)
+        console.log(`Found existing TDS summary sheet: "${sheetName}"`)
+      } else {
+        console.log('TDS summary sheet not found, creating it...')
         // Create sheet and headers
         await this.sheets.spreadsheets.batchUpdate({
           spreadsheetId: mentorCommissionSheetId,
@@ -2146,7 +2169,21 @@ class GoogleSheetsService {
             ]]
           }
         })
-        rows = [['Date of Payment','Invoice Number','Vendor/Mentor Name','PAN Number','Total Amount','TDS Paid','Post TDS Amount','TDS Status','Invoice Link']]
+        console.log('TDS summary sheet created with headers')
+      }
+
+      // Verify sheet exists by reading it
+      let rows: any[] = []
+      try {
+        const read = await this.sheets.spreadsheets.values.get({
+          spreadsheetId: mentorCommissionSheetId,
+          range: `${sheetName}!A:I`
+        })
+        rows = read.data.values || []
+        console.log(`Successfully read TDS summary sheet, current rows: ${rows.length}`)
+      } catch (readError) {
+        console.error('Error reading TDS summary sheet:', readError)
+        throw new Error(`Failed to read TDS summary sheet: ${readError instanceof Error ? readError.message : 'Unknown error'}`)
       }
 
       const newRow = [
@@ -2162,24 +2199,32 @@ class GoogleSheetsService {
       ]
 
       console.log('Adding TDS summary record with data:', {
+        sheetName,
         dateOfPayment: formatDateForSheets(data.dateOfPayment),
         invoiceNumber: data.invoiceNumber,
         mentorName: data.mentorName,
         totalAmount: data.totalAmount,
         tdsPaid: data.tdsPaid,
-        postTdsAmount: data.postTdsAmount
+        postTdsAmount: data.postTdsAmount,
+        newRow
       })
 
       // Use USER_ENTERED to allow Google Sheets to interpret dates and numbers properly
+      const range = `${sheetName}!A:I`
+      console.log(`Appending to range: ${range}`)
       const appendResult = await this.sheets.spreadsheets.values.append({
         spreadsheetId: mentorCommissionSheetId,
-        range: 'TDS summary!A:I',
+        range: range,
         valueInputOption: 'USER_ENTERED', // Changed from RAW to USER_ENTERED so dates are recognized
         insertDataOption: 'INSERT_ROWS',
         resource: { values: [newRow] }
       })
 
-      console.log('TDS summary record appended successfully:', appendResult.data)
+      console.log('TDS summary record appended successfully:', {
+        updatedRange: appendResult.data.updates?.updatedRange,
+        updatedRows: appendResult.data.updates?.updatedRows,
+        updatedCells: appendResult.data.updates?.updatedCells
+      })
     } catch (error) {
       console.error('Error adding TDS summary record:', error)
       throw error

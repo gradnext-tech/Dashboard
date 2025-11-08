@@ -547,18 +547,24 @@ export async function POST(request: NextRequest) {
             console.log(`  Invoice uploaded, link: ${invoiceLink}`)
 
             console.log(`  Adding TDS summary record...`)
-            await googleSheetsService.addTDSSummaryRecord({
-              dateOfPayment: targetDate,
-              invoiceNumber,
-              mentorName, // Column header in sheet may read "Vendor/Mentor Name"
-              panNumber: pan || '',
-              totalAmount,
-              tdsPaid,
-              postTdsAmount,
-              tdsStatus: 'Due', // Keep as Due - will be marked as Paid manually
-              invoiceLink
-            })
-            console.log(`  TDS summary record added successfully for ${mentorName}`)
+            try {
+              await googleSheetsService.addTDSSummaryRecord({
+                dateOfPayment: targetDate,
+                invoiceNumber,
+                mentorName, // Column header in sheet may read "Vendor/Mentor Name"
+                panNumber: pan || '',
+                totalAmount,
+                tdsPaid,
+                postTdsAmount,
+                tdsStatus: 'Due', // Keep as Due - will be marked as Paid manually
+                invoiceLink
+              })
+              console.log(`  TDS summary record added successfully for ${mentorName}`)
+            } catch (tdsSummaryError) {
+              console.error(`  ERROR adding TDS summary record for ${mentorName}:`, tdsSummaryError)
+              // Don't throw - we still want to mark payments as paid even if TDS summary fails
+              // But log it so we know there's an issue
+            }
           }
         } else {
           console.log('No mentors found for TDS invoice generation')

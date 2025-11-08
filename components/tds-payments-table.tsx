@@ -41,6 +41,7 @@ interface DateTDSData {
 export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPaid }: TdsPaymentsTableProps) {
   const formatter = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' })
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set())
+  const [selectedMentors, setSelectedMentors] = useState<Set<string>>(new Set())
   const [processing, setProcessing] = useState(false)
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set())
   const [groupMode, setGroupMode] = useState<'date' | 'mentor'>('date')
@@ -254,6 +255,53 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
     }
   }
 
+  const handleSelectAllMentors = (checked: boolean) => {
+    if (checked) {
+      setSelectedMentors(new Set(mentorData.map(m => m.mentorName)))
+    } else {
+      setSelectedMentors(new Set())
+    }
+  }
+
+  const handleSelectMentor = (mentorName: string, checked: boolean) => {
+    const newSelected = new Set(selectedMentors)
+    if (checked) {
+      newSelected.add(mentorName)
+    } else {
+      newSelected.delete(mentorName)
+    }
+    setSelectedMentors(newSelected)
+  }
+
+  const handleMarkSelectedMentorsAsPaid = async () => {
+    if (selectedMentors.size === 0 || !onMarkMentorPaid) return
+    
+    setProcessing(true)
+    try {
+      for (const mentorName of Array.from(selectedMentors)) {
+        const mentorGroup = mentorData.find(m => m.mentorName === mentorName)
+        if (mentorGroup) {
+          // Collect all payment IDs for this mentor across all dates
+          const allPaymentIds: string[] = []
+          mentorGroup.dates.forEach(dateGroup => {
+            dateGroup.payments.forEach(payment => {
+              allPaymentIds.push(`tds_${payment.sNo}`)
+            })
+          })
+          
+          if (allPaymentIds.length > 0) {
+            await onMarkMentorPaid(mentorName, allPaymentIds)
+          }
+        }
+      }
+      setSelectedMentors(new Set())
+    } catch (error) {
+      console.error('Error marking selected mentors TDS payments as paid:', error)
+    } finally {
+      setProcessing(false)
+    }
+  }
+
   const toggleDateExpansion = (date: string) => {
     const newExpanded = new Set(expandedDates)
     if (newExpanded.has(date)) {
@@ -294,13 +342,19 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
               <div className="flex items-center space-x-2">
                 <button
                   className={`text-xs px-2 py-1 rounded border ${groupMode === 'date' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
-                  onClick={() => setGroupMode('date')}
+                  onClick={() => {
+                    setGroupMode('date')
+                    setSelectedMentors(new Set()) // Clear mentor selections when switching to date mode
+                  }}
                 >
                   Group by Date
                 </button>
                 <button
                   className={`text-xs px-2 py-1 rounded border ${groupMode === 'mentor' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'}`}
-                  onClick={() => setGroupMode('mentor')}
+                  onClick={() => {
+                    setGroupMode('mentor')
+                    setSelectedDates(new Set()) // Clear date selections when switching to mentor mode
+                  }}
                 >
                   Group by Mentor
                 </button>
@@ -316,6 +370,7 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
                   onChange={(e) => {
                     setSelectedMonth(e.target.value)
                     setSelectedDates(new Set()) // Clear date selections when month changes
+                    setSelectedMentors(new Set()) // Clear mentor selections when month changes
                   }}
                   className="text-sm px-3 py-1 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
@@ -343,6 +398,22 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
                   </span>
                 </>
               )}
+              {groupMode === 'mentor' && (
+                <>
+                  <input
+                    type="checkbox"
+                    checked={selectedMentors.size === mentorData.length && mentorData.length > 0}
+                    onChange={(e) => handleSelectAllMentors(e.target.checked)}
+                    className="rounded border-gray-300 text-primary focus:ring-primary ml-3"
+                  />
+                  <span className="text-sm text-gray-600">
+                    {selectedMentors.size > 0 
+                      ? `${selectedMentors.size} mentor(s) selected`
+                      : `Select all (${mentorData.length} mentors)`
+                    }
+                  </span>
+                </>
+              )}
             </div>
             
             {groupMode === 'date' && selectedDates.size > 0 && onMarkMentorPaid && (
@@ -353,6 +424,16 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
               >
                 <Check className="w-4 h-4 mr-2" />
                 Mark Selected as Paid ({selectedDates.size})
+              </Button>
+            )}
+            {groupMode === 'mentor' && selectedMentors.size > 0 && onMarkMentorPaid && (
+              <Button
+                onClick={handleMarkSelectedMentorsAsPaid}
+                disabled={processing}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                <Check className="w-4 h-4 mr-2" />
+                Mark Selected as Paid ({selectedMentors.size})
               </Button>
             )}
           </div>
@@ -516,6 +597,14 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
               <table className="min-w-full divide-y divide-gray-300">
                 <thead className="bg-gray-50">
                   <tr>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
+                      <input
+                        type="checkbox"
+                        checked={selectedMentors.size === mentorData.length && mentorData.length > 0}
+                        onChange={(e) => handleSelectAllMentors(e.target.checked)}
+                        className="rounded border-gray-300 text-primary focus:ring-primary"
+                      />
+                    </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Mentor
                     </th>
@@ -531,6 +620,14 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
                   {mentorData.map((mentorGroup) => (
                     <>
                       <tr key={mentorGroup.mentorName} className="hover:bg-gray-50">
+                        <td className="px-3 py-3 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={selectedMentors.has(mentorGroup.mentorName)}
+                            onChange={(e) => handleSelectMentor(mentorGroup.mentorName, e.target.checked)}
+                            className="rounded border-gray-300 text-primary focus:ring-primary"
+                          />
+                        </td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           <div className="flex items-center">
                             <button
@@ -561,7 +658,7 @@ export function TDSPaymentsTable({ tdsPayments, loading = false, onMarkMentorPai
                       </tr>
                       {expandedMentors.has(mentorGroup.mentorName) && (
                         <tr>
-                          <td colSpan={3} className="px-6 py-4 bg-gray-50">
+                          <td colSpan={4} className="px-6 py-4 bg-gray-50">
                             <div className="space-y-4">
                               <h4 className="text-sm font-medium text-gray-900 mb-2">TDS Dates for {mentorGroup.mentorName}</h4>
                               <div className="space-y-3">
