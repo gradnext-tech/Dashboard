@@ -338,6 +338,37 @@ class GoogleSheetsService {
       // Get mentor rates for calculation
       const mentorRates = await this.getMentorRates()
       
+      // Helper function to format date for Google Sheets (ensures it's recognized as a date)
+      const formatDateForSheets = (dateStr: string): string => {
+        if (!dateStr) return ''
+        const trimmed = dateStr.toString().trim()
+        
+        // Try to parse as DD/MM/YYYY first (en-IN format)
+        const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/)
+        if (ddmmyyyyMatch) {
+          const day = ddmmyyyyMatch[1].padStart(2, '0')
+          const month = ddmmyyyyMatch[2].padStart(2, '0')
+          let year = ddmmyyyyMatch[3]
+          if (year.length === 2) year = `20${year}`
+          // Return in DD/MM/YYYY format for en-IN locale
+          return `${day}/${month}/${year}`
+        }
+        
+        // Try to parse as a Date object and format
+        try {
+          const date = new Date(trimmed)
+          if (!isNaN(date.getTime())) {
+            // Format as DD/MM/YYYY for en-IN locale
+            const day = date.getDate().toString().padStart(2, '0')
+            const month = (date.getMonth() + 1).toString().padStart(2, '0')
+            const year = date.getFullYear()
+            return `${day}/${month}/${year}`
+          }
+        } catch {}
+        
+        return trimmed
+      }
+      
       // Prepare data for export (with auto-generated S No. and calculated rates)
       const exportData = payments.map(payment => {
         const isMisc = (payment.sheetName || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
@@ -352,25 +383,26 @@ class GoogleSheetsService {
         const totalRevenue = mentorRate * payment.noOfSessions // Total revenue is rate * sessions
         
         return [
-          currentSNo++,          // S No.
-          payment.mentorName,    // Mentor Name
-          payment.menteeName,    // Mentee Name
-          payment.sessionDate,   // Session Date
-          'Completed',           // Session Status (always "Completed" for exported sessions)
-          mentorRate,            // Rate (per-row for Miscellaneous, otherwise from rate list)
-          'Due',                 // Payment Status (always "Due" in Mentor Commission)
-          payment.noOfSessions,  // No. of Sessions
-          totalPayout,           // Total Payout (rate * sessions)
-          revenuePerSession,     // Revenue per session
-          totalRevenue           // Total Revenue
+          currentSNo++,                    // S No.
+          payment.mentorName,               // Mentor Name
+          payment.menteeName,             // Mentee Name
+          formatDateForSheets(payment.sessionDate), // Session Date (formatted as date)
+          'Completed',                    // Session Status (always "Completed" for exported sessions)
+          mentorRate,                     // Rate (per-row for Miscellaneous, otherwise from rate list)
+          'Due',                          // Payment Status (always "Due" in Mentor Commission)
+          payment.noOfSessions,           // No. of Sessions
+          totalPayout,                    // Total Payout (rate * sessions)
+          revenuePerSession,              // Revenue per session
+          totalRevenue                    // Total Revenue
         ]
       })
 
       // Append data to the specific "Mentor Commission" sheet
+      // Use USER_ENTERED to allow Google Sheets to interpret dates properly
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: mentorCommissionSheetId,
         range: 'Mentor Commission!A:K', // Use the specific "Mentor Commission" sheet (11 columns: S No. to Total Revenue)
-        valueInputOption: 'RAW',
+        valueInputOption: 'USER_ENTERED', // Changed from RAW to USER_ENTERED so dates are recognized
         insertDataOption: 'INSERT_ROWS',
         resource: {
           values: exportData,
@@ -484,30 +516,61 @@ class GoogleSheetsService {
       const finalRate = mentorRate > 0 ? mentorRate : entry.rate
       const finalTotalPayout = finalRate * entry.noOfSessions
 
+      // Helper function to format date for Google Sheets (ensures it's recognized as a date)
+      const formatDateForSheets = (dateStr: string): string => {
+        if (!dateStr) return ''
+        const trimmed = dateStr.toString().trim()
+        
+        // Try to parse as DD/MM/YYYY first (en-IN format)
+        const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/)
+        if (ddmmyyyyMatch) {
+          const day = ddmmyyyyMatch[1].padStart(2, '0')
+          const month = ddmmyyyyMatch[2].padStart(2, '0')
+          let year = ddmmyyyyMatch[3]
+          if (year.length === 2) year = `20${year}`
+          // Return in DD/MM/YYYY format for en-IN locale
+          return `${day}/${month}/${year}`
+        }
+        
+        // Try to parse as a Date object and format
+        try {
+          const date = new Date(trimmed)
+          if (!isNaN(date.getTime())) {
+            // Format as DD/MM/YYYY for en-IN locale
+            const day = date.getDate().toString().padStart(2, '0')
+            const month = (date.getMonth() + 1).toString().padStart(2, '0')
+            const year = date.getFullYear()
+            return `${day}/${month}/${year}`
+          }
+        } catch {}
+        
+        return trimmed
+      }
 
       // Prepare data for manual entry (with auto-generated S No. and calculated rates)
       const revenuePerSession = finalRate // Revenue per session is the same as rate
       const totalRevenue = finalRate * entry.noOfSessions // Total revenue is rate * sessions
       
       const entryData = [
-        nextSNo,              // S No.
-        entry.mentorName,     // Mentor Name
-        entry.menteeName,     // Mentee Name
-        entry.sessionDate,    // Session Date
-        'Completed',          // Session Status (always "Completed" for mentor commission entries)
-        finalRate,            // Rate
-        entry.paymentStatus,  // Payment Status
-        entry.noOfSessions,   // No. of Sessions
-        finalTotalPayout,     // Total Payout
-        revenuePerSession,    // Revenue per session
-        totalRevenue          // Total Revenue
+        nextSNo,                              // S No.
+        entry.mentorName,                      // Mentor Name
+        entry.menteeName,                      // Mentee Name
+        formatDateForSheets(entry.sessionDate), // Session Date (formatted as date)
+        'Completed',                          // Session Status (always "Completed" for mentor commission entries)
+        finalRate,                            // Rate
+        entry.paymentStatus,                  // Payment Status
+        entry.noOfSessions,                   // No. of Sessions
+        finalTotalPayout,                     // Total Payout
+        revenuePerSession,                    // Revenue per session
+        totalRevenue                          // Total Revenue
       ]
 
       // Append data to the specific "Mentor Commission" sheet
+      // Use USER_ENTERED to allow Google Sheets to interpret dates properly
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: mentorCommissionSheetId,
         range: 'Mentor Commission!A:K', // Use the specific "Mentor Commission" sheet
-        valueInputOption: 'RAW',
+        valueInputOption: 'USER_ENTERED', // Changed from RAW to USER_ENTERED so dates are recognized
         insertDataOption: 'INSERT_ROWS',
         resource: {
           values: [entryData],
@@ -2026,6 +2089,37 @@ class GoogleSheetsService {
         throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
       }
 
+      // Helper function to format date for Google Sheets (ensures it's recognized as a date)
+      const formatDateForSheets = (dateStr: string): string => {
+        if (!dateStr) return ''
+        const trimmed = dateStr.toString().trim()
+        
+        // Try to parse as DD/MM/YYYY first (en-IN format)
+        const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/)
+        if (ddmmyyyyMatch) {
+          const day = ddmmyyyyMatch[1].padStart(2, '0')
+          const month = ddmmyyyyMatch[2].padStart(2, '0')
+          let year = ddmmyyyyMatch[3]
+          if (year.length === 2) year = `20${year}`
+          // Return in DD/MM/YYYY format for en-IN locale
+          return `${day}/${month}/${year}`
+        }
+        
+        // Try to parse as a Date object and format
+        try {
+          const date = new Date(trimmed)
+          if (!isNaN(date.getTime())) {
+            // Format as DD/MM/YYYY for en-IN locale
+            const day = date.getDate().toString().padStart(2, '0')
+            const month = (date.getMonth() + 1).toString().padStart(2, '0')
+            const year = date.getFullYear()
+            return `${day}/${month}/${year}`
+          }
+        } catch {}
+        
+        return trimmed
+      }
+
       // Ensure sheet exists by attempting to read; if missing, create with headers
       let rows: any[] = []
       try {
@@ -2048,29 +2142,30 @@ class GoogleSheetsService {
           valueInputOption: 'RAW',
           requestBody: {
             values: [[
-              'Date of Payment','Invoice Number','Mentor Name','PAN Number','Total Amount','TDS Paid','Post TDS Amount','TDS Status','Invoice Link'
+              'Date of Payment','Invoice Number','Vendor/Mentor Name','PAN Number','Total Amount','TDS Paid','Post TDS Amount','TDS Status','Invoice Link'
             ]]
           }
         })
-        rows = [['Date of Payment','Invoice Number','Mentor Name','PAN Number','Total Amount','TDS Paid','Post TDS Amount','TDS Status','Invoice Link']]
+        rows = [['Date of Payment','Invoice Number','Vendor/Mentor Name','PAN Number','Total Amount','TDS Paid','Post TDS Amount','TDS Status','Invoice Link']]
       }
 
       const newRow = [
-        data.dateOfPayment,
-        data.invoiceNumber,
-        data.mentorName,
-        data.panNumber,
-        data.totalAmount,
-        data.tdsPaid,
-        data.postTdsAmount,
-        data.tdsStatus,
-        data.invoiceLink
+        formatDateForSheets(data.dateOfPayment), // Date of Payment (formatted as date)
+        data.invoiceNumber,                       // Invoice Number
+        data.mentorName,                          // Vendor/Mentor Name
+        data.panNumber,                          // PAN Number
+        data.totalAmount,                        // Total Amount
+        data.tdsPaid,                           // TDS Paid
+        data.postTdsAmount,                     // Post TDS Amount
+        data.tdsStatus,                         // TDS Status
+        data.invoiceLink                        // Invoice Link
       ]
 
+      // Use USER_ENTERED to allow Google Sheets to interpret dates and numbers properly
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: mentorCommissionSheetId,
         range: 'TDS summary!A:I',
-        valueInputOption: 'RAW',
+        valueInputOption: 'USER_ENTERED', // Changed from RAW to USER_ENTERED so dates are recognized
         insertDataOption: 'INSERT_ROWS',
         requestBody: { values: [newRow] }
       })

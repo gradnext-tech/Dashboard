@@ -389,7 +389,7 @@ export async function POST(request: NextRequest) {
             totalAmount,
             tdsPaid,
             postTdsAmount,
-            tdsStatus: 'Paid',
+            tdsStatus: 'Due', // Keep as Due - will be marked as Paid manually
             invoiceLink
           })
         }
@@ -503,7 +503,7 @@ export async function POST(request: NextRequest) {
               totalAmount,
               tdsPaid,
               postTdsAmount,
-              tdsStatus: 'Paid',
+              tdsStatus: 'Due', // Keep as Due - will be marked as Paid manually
               invoiceLink
             })
           }
