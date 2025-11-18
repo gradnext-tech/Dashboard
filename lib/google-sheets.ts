@@ -82,6 +82,52 @@ class GoogleSheetsService {
     this.drive = google.drive({ version: 'v3', auth: this.auth })
   }
 
+  private parseDateParts(dateStr?: string | null): { day: number; month: number; year: number } | null {
+    if (!dateStr) return null
+    const trimmed = dateStr.toString().trim()
+    if (!trimmed) return null
+
+    const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/)
+    if (ddmmyyyyMatch) {
+      const day = parseInt(ddmmyyyyMatch[1], 10)
+      const month = parseInt(ddmmyyyyMatch[2], 10)
+      let year = parseInt(ddmmyyyyMatch[3], 10)
+      if (ddmmyyyyMatch[3].length === 2) year += 2000
+      return { day, month, year }
+    }
+
+    const yyyymmddMatch = trimmed.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/)
+    if (yyyymmddMatch) {
+      const year = parseInt(yyyymmddMatch[1], 10)
+      const month = parseInt(yyyymmddMatch[2], 10)
+      const day = parseInt(yyyymmddMatch[3], 10)
+      return { day, month, year }
+    }
+
+    try {
+      const date = new Date(trimmed)
+      if (!isNaN(date.getTime())) {
+        const day = date.getDate()
+        const month = date.getMonth() + 1
+        const year = date.getFullYear()
+        return { day, month, year }
+      }
+    } catch {}
+
+    return null
+  }
+
+  private formatDateForSheets(dateStr?: string | null): string {
+    const parts = this.parseDateParts(dateStr)
+    if (parts) {
+      const month = parts.month.toString().padStart(2, '0')
+      const day = parts.day.toString().padStart(2, '0')
+      const year = parts.year
+      return `${month}/${day}/${year}`
+    }
+    return (dateStr || '').toString().trim()
+  }
+
   async getPaymentData(): Promise<PaymentRecord[]> {
     try {
       const spreadsheetId = process.env.GOOGLE_SHEET_ID
@@ -338,37 +384,6 @@ class GoogleSheetsService {
       // Get mentor rates for calculation
       const mentorRates = await this.getMentorRates()
       
-      // Helper function to format date for Google Sheets (ensures it's recognized as a date)
-      const formatDateForSheets = (dateStr: string): string => {
-        if (!dateStr) return ''
-        const trimmed = dateStr.toString().trim()
-        
-        // Try to parse as DD/MM/YYYY first (en-IN format)
-        const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/)
-        if (ddmmyyyyMatch) {
-          const day = ddmmyyyyMatch[1].padStart(2, '0')
-          const month = ddmmyyyyMatch[2].padStart(2, '0')
-          let year = ddmmyyyyMatch[3]
-          if (year.length === 2) year = `20${year}`
-          // Return in DD/MM/YYYY format for en-IN locale
-          return `${day}/${month}/${year}`
-        }
-        
-        // Try to parse as a Date object and format
-        try {
-          const date = new Date(trimmed)
-          if (!isNaN(date.getTime())) {
-            // Format as DD/MM/YYYY for en-IN locale
-            const day = date.getDate().toString().padStart(2, '0')
-            const month = (date.getMonth() + 1).toString().padStart(2, '0')
-            const year = date.getFullYear()
-            return `${day}/${month}/${year}`
-          }
-        } catch {}
-        
-        return trimmed
-      }
-      
       // Prepare data for export (with auto-generated S No. and calculated rates)
       const exportData = payments.map(payment => {
         const isMisc = (payment.sheetName || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
@@ -386,7 +401,7 @@ class GoogleSheetsService {
           currentSNo++,                    // S No.
           payment.mentorName,               // Mentor Name
           payment.menteeName,             // Mentee Name
-          formatDateForSheets(payment.sessionDate), // Session Date (formatted as date)
+          this.formatDateForSheets(payment.sessionDate), // Session Date (formatted as date)
           'Completed',                    // Session Status (always "Completed" for exported sessions)
           mentorRate,                     // Rate (per-row for Miscellaneous, otherwise from rate list)
           'Due',                          // Payment Status (always "Due" in Mentor Commission)
@@ -516,37 +531,6 @@ class GoogleSheetsService {
       const finalRate = mentorRate > 0 ? mentorRate : entry.rate
       const finalTotalPayout = finalRate * entry.noOfSessions
 
-      // Helper function to format date for Google Sheets (ensures it's recognized as a date)
-      const formatDateForSheets = (dateStr: string): string => {
-        if (!dateStr) return ''
-        const trimmed = dateStr.toString().trim()
-        
-        // Try to parse as DD/MM/YYYY first (en-IN format)
-        const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/)
-        if (ddmmyyyyMatch) {
-          const day = ddmmyyyyMatch[1].padStart(2, '0')
-          const month = ddmmyyyyMatch[2].padStart(2, '0')
-          let year = ddmmyyyyMatch[3]
-          if (year.length === 2) year = `20${year}`
-          // Return in DD/MM/YYYY format for en-IN locale
-          return `${day}/${month}/${year}`
-        }
-        
-        // Try to parse as a Date object and format
-        try {
-          const date = new Date(trimmed)
-          if (!isNaN(date.getTime())) {
-            // Format as DD/MM/YYYY for en-IN locale
-            const day = date.getDate().toString().padStart(2, '0')
-            const month = (date.getMonth() + 1).toString().padStart(2, '0')
-            const year = date.getFullYear()
-            return `${day}/${month}/${year}`
-          }
-        } catch {}
-        
-        return trimmed
-      }
-
       // Prepare data for manual entry (with auto-generated S No. and calculated rates)
       const revenuePerSession = finalRate // Revenue per session is the same as rate
       const totalRevenue = finalRate * entry.noOfSessions // Total revenue is rate * sessions
@@ -555,7 +539,7 @@ class GoogleSheetsService {
         nextSNo,                              // S No.
         entry.mentorName,                      // Mentor Name
         entry.menteeName,                      // Mentee Name
-        formatDateForSheets(entry.sessionDate), // Session Date (formatted as date)
+        this.formatDateForSheets(entry.sessionDate), // Session Date (formatted as date)
         'Completed',                          // Session Status (always "Completed" for mentor commission entries)
         finalRate,                            // Rate
         entry.paymentStatus,                  // Payment Status
@@ -2106,37 +2090,6 @@ class GoogleSheetsService {
       }
       console.log('Using spreadsheet ID:', mentorCommissionSheetId)
 
-      // Helper function to format date for Google Sheets (ensures it's recognized as a date)
-      const formatDateForSheets = (dateStr: string): string => {
-        if (!dateStr) return ''
-        const trimmed = dateStr.toString().trim()
-        
-        // Try to parse as DD/MM/YYYY first (en-IN format)
-        const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/)
-        if (ddmmyyyyMatch) {
-          const day = ddmmyyyyMatch[1].padStart(2, '0')
-          const month = ddmmyyyyMatch[2].padStart(2, '0')
-          let year = ddmmyyyyMatch[3]
-          if (year.length === 2) year = `20${year}`
-          // Return in DD/MM/YYYY format for en-IN locale
-          return `${day}/${month}/${year}`
-        }
-        
-        // Try to parse as a Date object and format
-        try {
-          const date = new Date(trimmed)
-          if (!isNaN(date.getTime())) {
-            // Format as DD/MM/YYYY for en-IN locale
-            const day = date.getDate().toString().padStart(2, '0')
-            const month = (date.getMonth() + 1).toString().padStart(2, '0')
-            const year = date.getFullYear()
-            return `${day}/${month}/${year}`
-          }
-        } catch {}
-        
-        return trimmed
-      }
-
       // First, get all sheets to find the correct TDS summary sheet name (case-insensitive)
       const spreadsheet = await this.sheets.spreadsheets.get({
         spreadsheetId: mentorCommissionSheetId,
@@ -2187,7 +2140,7 @@ class GoogleSheetsService {
       }
 
       const newRow = [
-        formatDateForSheets(data.dateOfPayment), // Date of Payment (formatted as date)
+        this.formatDateForSheets(data.dateOfPayment), // Date of Payment (formatted as date)
         data.invoiceNumber,                       // Invoice Number
         data.mentorName,                          // Vendor/Mentor Name
         data.panNumber,                          // PAN Number
@@ -2200,7 +2153,7 @@ class GoogleSheetsService {
 
       console.log('Adding TDS summary record with data:', {
         sheetName,
-        dateOfPayment: formatDateForSheets(data.dateOfPayment),
+        dateOfPayment: this.formatDateForSheets(data.dateOfPayment),
         invoiceNumber: data.invoiceNumber,
         mentorName: data.mentorName,
         totalAmount: data.totalAmount,
