@@ -76,7 +76,7 @@ export function AddManualEntryForm({ onAdd, onClose, loading = false }: AddManua
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
+
     if (!validateForm()) {
       return
     }
@@ -93,7 +93,7 @@ export function AddManualEntryForm({ onAdd, onClose, loading = false }: AddManua
         noOfSessions: formData.noOfSessions === '' ? 1 : (typeof formData.noOfSessions === 'number' ? formData.noOfSessions : parseInt(formData.noOfSessions) || 1),
         totalPayout: formData.totalPayout === '' ? 0 : (typeof formData.totalPayout === 'number' ? formData.totalPayout : parseFloat(formData.totalPayout) || 0)
       }
-      
+
       await onAdd(submitData)
       // Reset form after successful submission
       setFormData({
@@ -145,9 +145,8 @@ export function AddManualEntryForm({ onAdd, onClose, loading = false }: AddManua
                   type="text"
                   value={formData.mentorName}
                   onChange={(e) => handleInputChange('mentorName', e.target.value)}
-                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                    errors.mentorName ? 'border-red-500' : 'border-gray-300'
-                  }`}
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.mentorName ? 'border-red-500' : 'border-gray-300'
+                    }`}
                   placeholder="Enter Mentor Name"
                 />
                 {errors.mentorName && <p className="text-red-500 text-xs mt-1">{errors.mentorName}</p>}
@@ -162,9 +161,8 @@ export function AddManualEntryForm({ onAdd, onClose, loading = false }: AddManua
                   type="text"
                   value={formData.menteeName}
                   onChange={(e) => handleInputChange('menteeName', e.target.value)}
-                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                    errors.menteeName ? 'border-red-500' : 'border-gray-300'
-                  }`}
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.menteeName ? 'border-red-500' : 'border-gray-300'
+                    }`}
                   placeholder="Enter Mentee Name"
                 />
                 {errors.menteeName && <p className="text-red-500 text-xs mt-1">{errors.menteeName}</p>}
@@ -179,9 +177,8 @@ export function AddManualEntryForm({ onAdd, onClose, loading = false }: AddManua
                   type="text"
                   value={formData.sessionDate}
                   onChange={(e) => handleInputChange('sessionDate', e.target.value)}
-                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                    errors.sessionDate ? 'border-red-500' : 'border-gray-300'
-                  }`}
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.sessionDate ? 'border-red-500' : 'border-gray-300'
+                    }`}
                   placeholder="e.g., Monday, September 9, 2025"
                 />
                 {errors.sessionDate && <p className="text-red-500 text-xs mt-1">{errors.sessionDate}</p>}
@@ -195,9 +192,8 @@ export function AddManualEntryForm({ onAdd, onClose, loading = false }: AddManua
                 <select
                   value={formData.sessionStatus}
                   onChange={(e) => handleInputChange('sessionStatus', e.target.value)}
-                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                    errors.sessionStatus ? 'border-red-500' : 'border-gray-300'
-                  }`}
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.sessionStatus ? 'border-red-500' : 'border-gray-300'
+                    }`}
                 >
                   <option value="Completed">Completed</option>
                   <option value="Pending">Pending</option>
@@ -217,9 +213,8 @@ export function AddManualEntryForm({ onAdd, onClose, loading = false }: AddManua
                   step="0.01"
                   value={formData.rate}
                   onChange={(e) => handleNumberChange('rate', e.target.value)}
-                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                    errors.rate ? 'border-red-500' : 'border-gray-300'
-                  }`}
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.rate ? 'border-red-500' : 'border-gray-300'
+                    }`}
                   placeholder="0.00"
                 />
                 {errors.rate && <p className="text-red-500 text-xs mt-1">{errors.rate}</p>}
@@ -233,9 +228,8 @@ export function AddManualEntryForm({ onAdd, onClose, loading = false }: AddManua
                 <select
                   value={formData.paymentStatus}
                   onChange={(e) => handleInputChange('paymentStatus', e.target.value)}
-                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                    errors.paymentStatus ? 'border-red-500' : 'border-gray-300'
-                  }`}
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.paymentStatus ? 'border-red-500' : 'border-gray-300'
+                    }`}
                 >
                   <option value="Due">Due</option>
                   <option value="Paid">Paid</option>
@@ -253,9 +247,8 @@ export function AddManualEntryForm({ onAdd, onClose, loading = false }: AddManua
                   min="1"
                   value={formData.noOfSessions}
                   onChange={(e) => handleNumberChange('noOfSessions', e.target.value)}
-                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                    errors.noOfSessions ? 'border-red-500' : 'border-gray-300'
-                  }`}
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.noOfSessions ? 'border-red-500' : 'border-gray-300'
+                    }`}
                   placeholder="1"
                 />
                 {errors.noOfSessions && <p className="text-red-500 text-xs mt-1">{errors.noOfSessions}</p>}
@@ -272,9 +265,8 @@ export function AddManualEntryForm({ onAdd, onClose, loading = false }: AddManua
                   step="0.01"
                   value={formData.totalPayout}
                   onChange={(e) => handleNumberChange('totalPayout', e.target.value)}
-                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                    errors.totalPayout ? 'border-red-500' : 'border-gray-300'
-                  }`}
+                  className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.totalPayout ? 'border-red-500' : 'border-gray-300'
+                    }`}
                   placeholder="0.00"
                 />
                 {errors.totalPayout && <p className="text-red-500 text-xs mt-1">{errors.totalPayout}</p>}

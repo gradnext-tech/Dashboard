@@ -58,6 +58,7 @@ export interface CorporateSessionRecord {
   rowIndex: number
   sheetName: string
   customRate?: number
+  sessionType?: string
 }
 
 
@@ -104,15 +105,62 @@ class GoogleSheetsService {
       return { day, month, year }
     }
 
+    // Match DD/MM or DD-MM (default to current year)
+    const ddmmMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})$/)
+    if (ddmmMatch) {
+      const day = parseInt(ddmmMatch[1], 10)
+      const month = parseInt(ddmmMatch[2], 10)
+      const year = new Date().getFullYear()
+      return { day, month, year }
+    }
+
+    // Match "Weekday, Month Day" (e.g. "Monday, January 26")
+    const weekdayMatch = trimmed.match(/^([A-Za-z]+), ([A-Za-z]+) (\d{1,2})$/)
+    if (weekdayMatch) {
+      const weekdayStr = weekdayMatch[1].toLowerCase()
+      const monthStr = weekdayMatch[2].toLowerCase()
+      const day = parseInt(weekdayMatch[3], 10)
+
+      const months: { [key: string]: number } = {
+        january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+        july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+        jan: 0, feb: 1, mar: 2, apr: 3, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+      }
+      const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+
+      const month = months[monthStr]
+      if (month !== undefined) {
+        // Check years around current year to find which one matches the weekday
+        const currentYear = new Date().getFullYear()
+        const candidateYears = [currentYear, currentYear - 1, currentYear + 1]
+
+        for (const y of candidateYears) {
+          const d = new Date(y, month, day)
+          // Verify date matches weekday
+          if (d.getMonth() === month && days[d.getDay()] === weekdayStr) {
+            return { day, month: month + 1, year: y }
+          }
+        }
+        // Fallback to current year if no match found
+        return { day, month: month + 1, year: currentYear }
+      }
+    }
+
     try {
       const date = new Date(trimmed)
       if (!isNaN(date.getTime())) {
         const day = date.getDate()
         const month = date.getMonth() + 1
-        const year = date.getFullYear()
+        let year = date.getFullYear()
+
+        // Fix for standard parser behavior where missing year defaults to 2001
+        if (year === 2001 && !trimmed.includes('2001') && !trimmed.match(/\b01\b/)) {
+          year = new Date().getFullYear()
+        }
+
         return { day, month, year }
       }
-    } catch {}
+    } catch { }
 
     return null
   }
@@ -131,7 +179,7 @@ class GoogleSheetsService {
   async getPaymentData(): Promise<PaymentRecord[]> {
     try {
       const spreadsheetId = process.env.GOOGLE_SHEET_ID
-      
+
       if (!spreadsheetId) {
         throw new Error('GOOGLE_SHEET_ID is not configured')
       }
@@ -142,12 +190,12 @@ class GoogleSheetsService {
       })
 
       const sheets = spreadsheet.data.sheets || []
-      const sessionInfoSheet = sheets.find((sheet: any) => 
+      const sessionInfoSheet = sheets.find((sheet: any) =>
         sheet.properties?.title?.toLowerCase() === 'session info'
       )
 
       if (!sessionInfoSheet) {
-        console.error('Session Info sheet not found. Available sheets:', 
+        console.error('Session Info sheet not found. Available sheets:',
           sheets.map((s: any) => s.properties?.title).filter(Boolean)
         )
         throw new Error('Session Info sheet not found in the spreadsheet')
@@ -161,7 +209,7 @@ class GoogleSheetsService {
       })
 
       const rows = response.data.values || []
-      
+
       if (rows.length === 0) {
         return []
       }
@@ -171,16 +219,16 @@ class GoogleSheetsService {
 
       // Skip header row and process data
       const payments: PaymentRecord[] = []
-      
+
       for (let i = 1; i < rows.length; i++) {
         const row = rows[i]
         if (row.length === 0) continue
 
-        // Parse and format the session date to include 2025
+        // Parse and format the session date correctly
         let sessionDate = row[10] || ''
-        if (sessionDate && !sessionDate.includes('2025')) {
-          // If the date doesn't contain 2025, add it
-          sessionDate = sessionDate.includes('2025') ? sessionDate : `${sessionDate}, 2025`
+        const dateParts = this.parseDateParts(sessionDate)
+        if (dateParts) {
+          sessionDate = `${dateParts.month}/${dateParts.day}/${dateParts.year}`
         }
 
         // Get mentor rate and calculate total payout
@@ -194,7 +242,7 @@ class GoogleSheetsService {
           sNo: (i).toString(), // Sequential row number for S No (starting from 1)
           mentorName: mentorName, // Mentor Name
           menteeName: row[6] || '', // Candidate Name
-          sessionDate: sessionDate, // Session Date with 2025
+          sessionDate: sessionDate, // Session Date
           sessionStatus: row[12] || '', // Session Status
           rate: mentorRate, // Rate from Rate List sheet
           paymentStatus: (row[17] || '').toLowerCase(), // Payment column
@@ -215,12 +263,12 @@ class GoogleSheetsService {
 
   async getDuePayments(): Promise<PaymentRecord[]> {
     const allPayments = await this.getPaymentData()
-    
+
     // Filter payments where Payment column equals "Due"
-    const duePayments = allPayments.filter(payment => 
+    const duePayments = allPayments.filter(payment =>
       payment.paymentStatus.toLowerCase().trim() === 'due'
     )
-    
+
     // Update S No to be sequential for filtered results
     return duePayments.map((payment, index) => ({
       ...payment,
@@ -230,12 +278,12 @@ class GoogleSheetsService {
 
   async getPendingPayments(): Promise<PaymentRecord[]> {
     const allPayments = await this.getPaymentData()
-    
+
     // Filter payments where Payment column equals "Pending"
-    const pendingPayments = allPayments.filter(payment => 
+    const pendingPayments = allPayments.filter(payment =>
       payment.paymentStatus.toLowerCase().trim() === 'pending'
     )
-    
+
     // Update S No to be sequential for filtered results
     return pendingPayments.map((payment, index) => ({
       ...payment,
@@ -246,7 +294,7 @@ class GoogleSheetsService {
   async markAsPaid(paymentId: string): Promise<boolean> {
     try {
       const spreadsheetId = process.env.GOOGLE_SHEET_ID
-      
+
       if (!spreadsheetId) {
         throw new Error('GOOGLE_SHEET_ID is not configured')
       }
@@ -254,7 +302,7 @@ class GoogleSheetsService {
       // Find the payment record to get the row index
       const allPayments = await this.getPaymentData()
       const payment = allPayments.find(p => p.id === paymentId)
-      
+
       if (!payment) {
         throw new Error('Payment record not found')
       }
@@ -279,14 +327,14 @@ class GoogleSheetsService {
   async markMultipleAsPaid(paymentIds: string[]): Promise<boolean> {
     try {
       const spreadsheetId = process.env.GOOGLE_SHEET_ID
-      
+
       if (!spreadsheetId) {
         throw new Error('GOOGLE_SHEET_ID is not configured')
       }
 
       // Get all payments to find row indices
       const allPayments = await this.getPaymentData()
-      
+
       // Prepare batch update requests
       const requests = paymentIds.map(paymentId => {
         const payment = allPayments.find(p => p.id === paymentId)
@@ -321,7 +369,7 @@ class GoogleSheetsService {
   async exportToMentorCommission(payments: PaymentRecord[]): Promise<boolean> {
     try {
       const mentorCommissionSheetId = process.env.MENTOR_COMMISSION_SHEET_ID
-      
+
       if (!mentorCommissionSheetId) {
         throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
       }
@@ -334,14 +382,14 @@ class GoogleSheetsService {
       const sheets = spreadsheet.data.sheets || []
 
       // Find the specific "Mentor Commission" sheet
-      let mentorCommissionSheet = sheets.find((s: any) => 
+      let mentorCommissionSheet = sheets.find((s: any) =>
         s.properties?.title === 'Mentor Commission'
       )
 
       // If the sheet doesn't exist, create it
       if (!mentorCommissionSheet) {
         console.log('Mentor commission sheet not found, creating it...')
-        
+
         const addSheetRequest = {
           spreadsheetId: mentorCommissionSheetId,
           resource: {
@@ -354,16 +402,16 @@ class GoogleSheetsService {
             }]
           }
         }
-        
+
         await this.sheets.spreadsheets.batchUpdate(addSheetRequest)
-        
+
         // Add headers to the new sheet
         const headers = [
-          'S No.', 'Mentor Name', 'Mentee Name', 'Session Date', 
-          'Session Status', 'Rate', 'Payment Status', 'No. of Sessions', 
+          'S No.', 'Mentor Name', 'Mentee Name', 'Session Date',
+          'Session Status', 'Rate', 'Payment Status', 'No. of Sessions',
           'Total Payout', 'Revenue per session', 'Total Revenue'
         ]
-        
+
         await this.sheets.spreadsheets.values.update({
           spreadsheetId: mentorCommissionSheetId,
           range: 'Mentor Commission!A1:K1',
@@ -372,7 +420,7 @@ class GoogleSheetsService {
             values: [headers]
           }
         })
-        
+
         console.log('Mentor commission sheet created successfully')
       }
 
@@ -383,7 +431,7 @@ class GoogleSheetsService {
 
       // Get mentor rates for calculation
       const mentorRates = await this.getMentorRates()
-      
+
       // Prepare data for export (with auto-generated S No. and calculated rates)
       const exportData = payments.map(payment => {
         const isMisc = (payment.sheetName || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
@@ -396,7 +444,7 @@ class GoogleSheetsService {
         const totalPayout = mentorRate * payment.noOfSessions
         const revenuePerSession = mentorRate // Revenue per session is the same as rate
         const totalRevenue = mentorRate * payment.noOfSessions // Total revenue is rate * sessions
-        
+
         return [
           currentSNo++,                    // S No.
           payment.mentorName,               // Mentor Name
@@ -439,7 +487,7 @@ class GoogleSheetsService {
     try {
       const spreadsheetId = process.env.GOOGLE_SHEET_ID
       const corporateSpreadsheetId = process.env.CORPORATE_SHEET_ID
-      
+
       if (!spreadsheetId) {
         throw new Error('GOOGLE_SHEET_ID is not configured')
       }
@@ -514,7 +562,7 @@ class GoogleSheetsService {
   }): Promise<boolean> {
     try {
       const mentorCommissionSheetId = process.env.MENTOR_COMMISSION_SHEET_ID
-      
+
       if (!mentorCommissionSheetId) {
         throw new Error('MENTOR_COMMISSION_SHEET_ID is not configured')
       }
@@ -526,7 +574,7 @@ class GoogleSheetsService {
       // Get mentor rates for calculation
       const mentorRates = await this.getMentorRates()
       const mentorRate = this.getMentorRate(mentorRates, entry.mentorName)
-      
+
       // Use mentor rate from rates sheet if available, otherwise use provided rate
       const finalRate = mentorRate > 0 ? mentorRate : entry.rate
       const finalTotalPayout = finalRate * entry.noOfSessions
@@ -534,7 +582,7 @@ class GoogleSheetsService {
       // Prepare data for manual entry (with auto-generated S No. and calculated rates)
       const revenuePerSession = finalRate // Revenue per session is the same as rate
       const totalRevenue = finalRate * entry.noOfSessions // Total revenue is rate * sessions
-      
+
       const entryData = [
         nextSNo,                              // S No.
         entry.mentorName,                      // Mentor Name
@@ -577,7 +625,7 @@ class GoogleSheetsService {
       })
 
       const rows = response.data.values || []
-      
+
       if (rows.length <= 1) {
         // If only header or no data, start from 0
         return 0
@@ -661,7 +709,7 @@ class GoogleSheetsService {
   async getMentorRates(): Promise<MentorRate[]> {
     try {
       const rateListSheetId = process.env.RATE_LIST_SHEET_ID
-      
+
       if (!rateListSheetId) {
         throw new Error('RATE_LIST_SHEET_ID is not configured')
       }
@@ -674,21 +722,21 @@ class GoogleSheetsService {
       })
 
       const rows = response.data.values || []
-      
+
       if (rows.length === 0) {
         return []
       }
 
       // Process the data (Column B: Full Name, Column M: Rate)
       const mentorRates: MentorRate[] = []
-      
+
       for (let i = 1; i < rows.length; i++) { // Skip header row
         const row = rows[i]
         if (row.length === 0) continue
 
         const mentorName = (row[0] || '').trim() // Column B: Full Name
         const rateValue = row[11] || '0' // Column M: Rate (index 11 since we're reading B:M)
-        
+
         // Parse the rate value
         let rate = 0
         if (rateValue && !isNaN(Number(rateValue))) {
@@ -714,7 +762,7 @@ class GoogleSheetsService {
   async getMentorDetails(): Promise<MentorDetails[]> {
     try {
       const rateListSheetId = process.env.RATE_LIST_SHEET_ID
-      
+
       if (!rateListSheetId) {
         throw new Error('RATE_LIST_SHEET_ID is not configured')
       }
@@ -727,7 +775,7 @@ class GoogleSheetsService {
       })
 
       const rows = response.data.values || []
-      
+
       if (rows.length === 0) {
         return []
       }
@@ -735,8 +783,8 @@ class GoogleSheetsService {
       // Process the data
       // Columns: A=Timestamp, B=Full Name, C=Email ID, D=Phone Number, M=Rate
       const mentorDetails: MentorDetails[] = []
-      
-      
+
+
       for (let i = 1; i < rows.length; i++) { // Skip header row
         const row = rows[i]
         if (row.length === 0) continue
@@ -745,7 +793,7 @@ class GoogleSheetsService {
         let email = (row[2] || '').trim() // Column C: Email ID
         const phone = (row[3] || '').trim() // Column D: Phone Number
         const rateValue = row[12] || '0' // Column M: Rate
-        
+
         // If no email in column C, search other columns for email pattern
         if (!email || email === '') {
           for (let j = 0; j < row.length; j++) {
@@ -756,8 +804,8 @@ class GoogleSheetsService {
             }
           }
         }
-        
-        
+
+
         // Parse the rate value
         let rate = 0
         if (rateValue && !isNaN(Number(rateValue))) {
@@ -784,7 +832,7 @@ class GoogleSheetsService {
   async getMentorBankingDetails(): Promise<MentorBankingDetails[]> {
     try {
       const rateListSheetId = process.env.RATE_LIST_SHEET_ID
-      
+
       if (!rateListSheetId) {
         throw new Error('RATE_LIST_SHEET_ID is not configured')
       }
@@ -798,13 +846,13 @@ class GoogleSheetsService {
       })
 
       const rows = response.data.values || []
-      
+
       if (rows.length === 0) {
         return []
       }
 
       const bankingDetails: MentorBankingDetails[] = []
-      
+
       for (let i = 1; i < rows.length; i++) { // Skip header row
         const row = rows[i]
         if (row.length === 0) continue
@@ -865,25 +913,25 @@ class GoogleSheetsService {
 
   getMentorRate(mentorRates: MentorRate[], mentorName: string): number {
     const normalizedMentorName = mentorName.toLowerCase().trim()
-    const mentorRate = mentorRates.find(rate => 
+    const mentorRate = mentorRates.find(rate =>
       rate.mentorName.toLowerCase().trim() === normalizedMentorName
     )
     return mentorRate ? mentorRate.rate : 0
   }
 
-  async getDuePayoutsByMentor(): Promise<Array<{ 
-    mentorName: string; 
-    mentorEmail: string; 
-    totalPayout: number; 
+  async getDuePayoutsByMentor(): Promise<Array<{
+    mentorName: string;
+    mentorEmail: string;
+    totalPayout: number;
     sessions: number;
     monthlyBreakdown: Array<{ month: string; payout: number; sessions: number }>
     sessionsBreakdown: Array<{ date: string; menteeName: string; sessions: number; payout: number }>
   }>> {
     const duePayments = await this.getDuePayments()
-    const aggregation = new Map<string, { 
-      mentorName: string; 
-      mentorEmail: string; 
-      totalPayout: number; 
+    const aggregation = new Map<string, {
+      mentorName: string;
+      mentorEmail: string;
+      totalPayout: number;
       sessions: number;
       monthlyBreakdown: Map<string, { payout: number; sessions: number }>
       sessionsBreakdown: Array<{ date: string; menteeName: string; sessions: number; payout: number }>
@@ -893,7 +941,7 @@ class GoogleSheetsService {
       // Use mentor name as primary key to avoid duplicate entries
       const key = p.mentorName.toLowerCase().trim()
       let existing = aggregation.get(key)
-      
+
       if (!existing) {
         existing = {
           mentorName: p.mentorName,
@@ -961,7 +1009,7 @@ class GoogleSheetsService {
   async getCorporateSessionsData(): Promise<CorporateSessionRecord[]> {
     try {
       const corporateSpreadsheetId = process.env.CORPORATE_SHEET_ID
-      
+
       if (!corporateSpreadsheetId) {
         throw new Error('CORPORATE_SHEET_ID is not configured')
       }
@@ -992,7 +1040,7 @@ class GoogleSheetsService {
           })
 
           const rows = response.data.values || []
-          
+
           if (rows.length <= 1) {
             continue
           }
@@ -1000,13 +1048,13 @@ class GoogleSheetsService {
           // Validate header row to ensure correct column structure
           const headerRow = rows[0] || []
           const expectedHeaders = ['Sr No.', 'Mentor Name', 'Mentor Email', 'Mentee Name', 'Mentee Email', 'Mentee Phone', 'Date', 'Time', 'Invite Title', 'Invitation Status', 'Mentor Confirmation Status', 'Mentee Confirmation Status', 'Session Status', 'Mentor Feedback', 'Mentee Feedback', 'Payment Status']
-          
+
           // Check if this sheet has the expected corporate structure
           const hasValidStructure = expectedHeaders.every((expectedHeader, index) => {
             const actualHeader = (headerRow[index] || '').toString().trim()
             return actualHeader.toLowerCase().includes(expectedHeader.toLowerCase().split(' ')[0]) // Check first word match
           })
-          
+
           const isMiscSheet = (sheetTitle || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
           if (!hasValidStructure && !isMiscSheet) {
             continue
@@ -1017,11 +1065,11 @@ class GoogleSheetsService {
             const row = rows[i]
             if (row.length === 0) continue
 
-            // Parse and format the session date to include 2025
+            // Parse and format the session date correctly
             let sessionDate = row[6] || ''
-            if (sessionDate && !sessionDate.includes('2025')) {
-              // If the date doesn't contain 2025, add it
-              sessionDate = sessionDate.includes('2025') ? sessionDate : `${sessionDate}, 2025`
+            const dateParts = this.parseDateParts(sessionDate)
+            if (dateParts) {
+              sessionDate = `${dateParts.month}/${dateParts.day}/${dateParts.year}`
             }
 
             // Map the columns based on the actual corporate sheet structure
@@ -1067,7 +1115,7 @@ class GoogleSheetsService {
               menteeName: row[3] || '', // Column D - Mentee Name (not sheet name)
               menteeEmail: row[4] || '', // Column E - Mentee Email
               menteePhone: row[5] || '', // Column F - Mentee Phone
-              date: sessionDate, // Column G - Date with 2025
+              date: sessionDate, // Column G - Date
               time: row[7] || '', // Column H - Time
               inviteTitle: row[8] || '', // Column I - Invite Title
               invitationStatus: row[9] || '', // Column J - Invitation Status
@@ -1080,7 +1128,8 @@ class GoogleSheetsService {
               rowIndex: i + 1,
               sheetName: sheetTitle,
               // Use per-row mentor rate when available; for Miscellaneous tracker this should be present
-              customRate: mentorRateIndex >= 0 ? parseRate(row[mentorRateIndex]) : undefined
+              customRate: mentorRateIndex >= 0 ? parseRate(row[mentorRateIndex]) : undefined,
+              sessionType: row[17] || '' // Column R - Session Type
             }
 
             allCorporateSessions.push(corporateSession)
@@ -1101,12 +1150,12 @@ class GoogleSheetsService {
 
   async getCorporateDuePayments(): Promise<CorporateSessionRecord[]> {
     const allSessions = await this.getCorporateSessionsData()
-    
+
     // Filter sessions where Payment Status equals "Due"
-    const dueSessions = allSessions.filter(session => 
+    const dueSessions = allSessions.filter(session =>
       session.paymentStatus.toLowerCase().trim() === 'due'
     )
-    
+
     // Update S No to be sequential for filtered results
     return dueSessions.map((session, index) => ({
       ...session,
@@ -1118,10 +1167,10 @@ class GoogleSheetsService {
     try {
       // Get regular payments
       const regularPayments = await this.getPaymentData()
-      
+
       // Get corporate sessions
       const corporateSessions = await this.getCorporateSessionsData()
-      
+
       // Convert corporate sessions to PaymentRecord format
       const corporatePayments: PaymentRecord[] = corporateSessions.map(session => ({
         id: session.id,
@@ -1141,10 +1190,11 @@ class GoogleSheetsService {
 
       // Get mentor rates for calculation
       const mentorRates = await this.getMentorRates()
-      
+
       // Calculate rates and payouts for corporate sessions
       corporatePayments.forEach(payment => {
         const isMisc = (payment.sheetName || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
+        const isMesaTracker = (payment.sheetName || '').toString().trim().toLowerCase() === 'mesa tracker'
 
         // For Miscellaneous Tracker: strictly use per-row Mentor Rate (no fallback to rate list)
         if (isMisc) {
@@ -1154,13 +1204,28 @@ class GoogleSheetsService {
         }
 
         // For other corporate sheets: use per-row rate if present, otherwise fallback to mentor rates sheet
+        let baseRate = 0
         if (typeof payment.rate === 'number' && isFinite(payment.rate) && payment.rate > 0) {
-          payment.totalPayout = payment.rate * payment.noOfSessions
+          baseRate = payment.rate
         } else {
           const mentorRate = this.getMentorRate(mentorRates, payment.mentorName)
           payment.rate = mentorRate
-          payment.totalPayout = mentorRate * payment.noOfSessions
+          baseRate = mentorRate
         }
+
+        // For Mesa Tracker: apply 1.5x multiplier if session type is "Assessment"
+        if (isMesaTracker) {
+          // Get session type from the corporate session (we'll need to pass it through)
+          const corporateSession = corporateSessions.find(s => s.id === payment.id)
+          const sessionType = (corporateSession?.sessionType || '').toString().trim().toLowerCase()
+
+          if (sessionType === 'assement') {
+            baseRate = baseRate * 1.5
+            // Don't update payment.rate - keep it as the original mentor rate
+          }
+        }
+
+        payment.totalPayout = baseRate * payment.noOfSessions
       })
 
       // Combine regular and corporate payments
@@ -1173,14 +1238,14 @@ class GoogleSheetsService {
 
   async getAllDuePaymentsIncludingCorporate(): Promise<PaymentRecord[]> {
     const allPayments = await this.getAllPaymentsIncludingCorporate()
-    
+
     // Filter payments where Payment Status equals "Due" (case-insensitive, trim whitespace)
     const duePayments = allPayments.filter(payment => {
       const status = payment.paymentStatus.toLowerCase().trim()
       return status === 'due'
     })
-    
-    
+
+
     // Update S No to be sequential for filtered results
     return duePayments.map((payment, index) => ({
       ...payment,
@@ -1188,23 +1253,23 @@ class GoogleSheetsService {
     }))
   }
 
-  async getDuePayoutsByMentorIncludingCorporate(): Promise<Array<{ 
-    mentorName: string; 
-    mentorEmail: string; 
-    totalPayout: number; 
+  async getDuePayoutsByMentorIncludingCorporate(): Promise<Array<{
+    mentorName: string;
+    mentorEmail: string;
+    totalPayout: number;
     sessions: number;
     monthlyBreakdown: Array<{ month: string; payout: number; sessions: number }>
     sessionsBreakdown?: Array<{ date: string; menteeName: string; sessions: number; payout: number }>
   }>> {
     const allPayments = await this.getAllDuePaymentsIncludingCorporate()
-    
+
     // Get mentor details (including emails) from RATE_LIST_SHEET
     const mentorDetails = await this.getMentorDetails()
-    
-    const aggregation = new Map<string, { 
-      mentorName: string; 
-      mentorEmail: string; 
-      totalPayout: number; 
+
+    const aggregation = new Map<string, {
+      mentorName: string;
+      mentorEmail: string;
+      totalPayout: number;
       sessions: number;
       monthlyBreakdown: Map<string, { payout: number; sessions: number }>
       sessionsBreakdown: Array<{ date: string; menteeName: string; sessions: number; payout: number }>
@@ -1213,35 +1278,35 @@ class GoogleSheetsService {
     for (const p of allPayments) {
       // Use mentor name as primary key to avoid duplicate entries
       const key = p.mentorName.toLowerCase().trim()
-      
-      
+
+
       let existing = aggregation.get(key)
-      
+
       if (!existing) {
         // Find mentor email from RATE_LIST_SHEET using the same matching logic as export
         const paymentMentorName = p.mentorName.toLowerCase().trim()
-        
+
         // Try exact match first
-        let mentorDetail = mentorDetails.find(detail => 
+        let mentorDetail = mentorDetails.find(detail =>
           detail.mentorName === paymentMentorName
         )
-        
+
         // If no exact match, try fuzzy matching
         if (!mentorDetail) {
           // Remove extra spaces and try again
           const normalizedPaymentName = paymentMentorName.replace(/\s+/g, ' ')
-          mentorDetail = mentorDetails.find(detail => 
+          mentorDetail = mentorDetails.find(detail =>
             detail.mentorName.replace(/\s+/g, ' ') === normalizedPaymentName
           )
         }
-        
+
         // If still no match, try partial matching (first name + last name)
         if (!mentorDetail) {
           const paymentNameParts = paymentMentorName.split(' ').filter(part => part.length > 0)
           if (paymentNameParts.length >= 2) {
             const firstName = paymentNameParts[0]
             const lastName = paymentNameParts[paymentNameParts.length - 1]
-            
+
             mentorDetail = mentorDetails.find(detail => {
               const detailParts = detail.mentorName.split(' ').filter(part => part.length > 0)
               if (detailParts.length >= 2) {
@@ -1253,10 +1318,10 @@ class GoogleSheetsService {
             })
           }
         }
-        
+
         const mentorEmail = mentorDetail?.email?.trim() || ''
-        
-        
+
+
         existing = {
           mentorName: p.mentorName,
           mentorEmail: mentorEmail,
@@ -1313,8 +1378,8 @@ class GoogleSheetsService {
         return da - db
       })
     }))
-    
-    
+
+
     return result
   }
 
@@ -1352,7 +1417,7 @@ class GoogleSheetsService {
       const finalPayments = rows.slice(1)
         .map((row: any[], index: number) => {
           if (!row || row.length < 9) return null
-          
+
           const paymentStatus = row[6]?.toString()?.trim()?.toLowerCase()
           if (paymentStatus !== 'due') return null
 
@@ -1424,42 +1489,42 @@ class GoogleSheetsService {
       const updates: any[] = []
       const currentDate = new Date().toLocaleDateString('en-IN') // Format: DD/MM/YYYY
       const TDS_RATE = 10 // 10%
-      
+
       for (let i = 1; i < rows.length; i++) { // Skip header row
         const row = rows[i]
         if (!row || row.length < 7) continue
-        
+
         const rowSNo = parseInt(row[0])
         if (sNoList.includes(rowSNo)) {
           // Get Total Payout from column I (index 8)
           const totalPayout = parseFloat(row[8]) || 0
           const tdsAmount = (totalPayout * TDS_RATE) / 100
           const postTdsAmount = totalPayout - tdsAmount
-          
+
           // Update Payment Status column (column G, index 6) to "Paid"
           updates.push({
             range: `Mentor commission!G${i + 1}`, // +1 because sheets are 1-indexed
             values: [['Paid']]
           })
-          
+
           // Update TDS % column (column L, index 11) with 10% (as decimal 0.1)
           updates.push({
             range: `Mentor commission!L${i + 1}`,
             values: [[TDS_RATE / 100]]
           })
-          
+
           // Update TDS Paid column (column M, index 12) with calculated TDS amount
           updates.push({
             range: `Mentor commission!M${i + 1}`,
             values: [[tdsAmount]]
           })
-          
+
           // Update Post TDS column (column N, index 13) with amount after TDS
           updates.push({
             range: `Mentor commission!N${i + 1}`,
             values: [[postTdsAmount]]
           })
-          
+
           // Update Date of Payment column (column O, index 14) with current date
           updates.push({
             range: `Mentor commission!O${i + 1}`, // +1 because sheets are 1-indexed
@@ -1510,45 +1575,45 @@ class GoogleSheetsService {
       const updates: any[] = []
       const currentDate = new Date().toLocaleDateString('en-IN') // Format: DD/MM/YYYY
       const TDS_RATE = 10 // 10%
-      
+
       // Find all rows for this mentor with "Due" status and mark them as "Paid"
       for (let i = 1; i < rows.length; i++) { // Skip header row
         const row = rows[i]
         if (!row || row.length < 7) continue
-        
+
         const rowMentorName = (row[1] || '').toString().trim().toLowerCase() // Column B is Mentor Name
         const paymentStatus = (row[6] || '').toString().trim().toLowerCase() // Column G is Payment Status
-        
+
         if (rowMentorName === normalizedMentorName && paymentStatus === 'due') {
           // Get Total Payout from column I (index 8)
           const totalPayout = parseFloat(row[8]) || 0
           const tdsAmount = (totalPayout * TDS_RATE) / 100
           const postTdsAmount = totalPayout - tdsAmount
-          
+
           // Update Payment Status column (column G, index 6) to "Paid"
           updates.push({
             range: `Mentor commission!G${i + 1}`, // +1 because sheets are 1-indexed
             values: [['Paid']]
           })
-          
+
           // Update TDS % column (column L, index 11) with 10% (as decimal 0.1)
           updates.push({
             range: `Mentor commission!L${i + 1}`,
             values: [[TDS_RATE / 100]]
           })
-          
+
           // Update TDS Paid column (column M, index 12) with calculated TDS amount
           updates.push({
             range: `Mentor commission!M${i + 1}`,
             values: [[tdsAmount]]
           })
-          
+
           // Update Post TDS column (column N, index 13) with amount after TDS
           updates.push({
             range: `Mentor commission!N${i + 1}`,
             values: [[postTdsAmount]]
           })
-          
+
           // Update Date of Payment column (column O, index 14) with current date
           updates.push({
             range: `Mentor commission!O${i + 1}`, // +1 because sheets are 1-indexed
@@ -1608,34 +1673,34 @@ class GoogleSheetsService {
             : [String(paymentIds)]
       )
       const updates: any[] = []
-      
+
       // Find all rows for this mentor with TDS data and mark TDS Paid Tag as "Paid"
       for (let i = 1; i < rows.length; i++) { // Skip header row
         const row = rows[i]
         if (!row || row.length < 13) continue // Need at least column M (TDS Paid)
-        
+
         const rowMentorName = (row[1] || '').toString().trim().toLowerCase() // Column B is Mentor Name
         // Column A is S.No; normalize to integer string to match UI id format
         const sNoRaw = (row[0] || '').toString().trim()
         const sNoNum = parseInt(sNoRaw)
         const sNo = Number.isFinite(sNoNum) ? sNoNum.toString() : sNoRaw
         const tdsAmountCell = row[12] // Column M: TDS Paid
-        
+
         // Check if this row matches the mentor
         if (rowMentorName !== normalizedMentorName) continue
-        
+
         // Check if TDS Paid column has actual data
         if (!tdsAmountCell || tdsAmountCell === '' || tdsAmountCell === null || tdsAmountCell === undefined) continue
-        
+
         const tdsAmount = parseFloat(tdsAmountCell)
         if (isNaN(tdsAmount) || tdsAmount <= 0) continue
-        
+
         // If paymentIds are provided, check if this row is included strictly by S.No-based id
         if (normalizedIds.size > 0) {
           const bySNo = `tds_${sNo}`
           if (!normalizedIds.has(bySNo)) continue
         }
-        
+
         // Update Column P (index 15) with "Paid" - this is the TDS Paid Tag column
         updates.push({
           range: `Mentor commission!P${i + 1}`, // +1 because sheets are 1-indexed
@@ -1692,7 +1757,7 @@ class GoogleSheetsService {
       const normalizeDate = (dateStr: string): string => {
         if (!dateStr) return ''
         const trimmed = dateStr.toString().trim()
-        
+
         // Parse as DD/MM/YYYY format (en-IN standard)
         const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/)
         if (ddmmyyyyMatch) {
@@ -1703,7 +1768,7 @@ class GoogleSheetsService {
           // Return in DD/MM/YYYY format
           return `${day}/${month}/${year}`
         }
-        
+
         // If regex doesn't match, return original string (don't use Date() constructor as it will misinterpret DD/MM as MM/DD)
         return trimmed
       }
@@ -1716,13 +1781,13 @@ class GoogleSheetsService {
       for (let i = 1; i < rows.length; i++) { // Skip header row
         const row = rows[i]
         if (!row || row.length < 15) continue // Need at least column O (index 14)
-        
+
         const rowDateOfPayment = (row[14] || '').toString().trim() // Column O: Date of Payment
         if (!rowDateOfPayment) continue
-        
+
         const normalizedRowDate = normalizeDate(rowDateOfPayment)
         console.log(`Row ${i + 1}: dateCell="${rowDateOfPayment}", normalized="${normalizedRowDate}", target="${targetDate}"`)
-        
+
         if (normalizedRowDate === targetDate) {
           // Update Column P (index 15) with "Paid" - this is the TDS Paid Tag column
           updates.push({
@@ -1804,18 +1869,18 @@ class GoogleSheetsService {
       const tdsPayments = rows.slice(1)
         .map((row: any[], index: number) => {
           if (!row || row.length < 13) return null // Need at least 13 columns to reach column M
-          
+
           const tdsAmountCell = row[12] // Column M: TDS Paid (index 12)
           const dateOfPaymentCell = row[14] // Column O: Date of Payment (index 14)
           const tdsPaidTagCell = row[15] // Column P: TDS Paid Tag (index 15)
-          
+
           // Only include rows where TDS Paid column has actual data (not empty, not zero, not null)
           if (!tdsAmountCell || tdsAmountCell === '' || tdsAmountCell === null || tdsAmountCell === undefined) {
             return null
           }
-          
+
           const tdsAmount = parseNumberCell(tdsAmountCell)
-          
+
           // Also check if the parsed TDS amount is a valid positive number
           if (isNaN(tdsAmount) || tdsAmount <= 0) return null
 
@@ -1855,7 +1920,7 @@ class GoogleSheetsService {
             paymentStatus: row[6]?.toString() || 'Paid',
             noOfSessions: parseInt(String(row[7])) || 0,
             totalPayout: parseNumberCell(row[8]),
-            tdsPercentage: (() => { const v = parseNumberCell(row[11]); return v > 1 ? v/100 : v || 0.10 })(), // accept 10 or 0.10
+            tdsPercentage: (() => { const v = parseNumberCell(row[11]); return v > 1 ? v / 100 : v || 0.10 })(), // accept 10 or 0.10
             tdsAmount: tdsAmount, // Column M: TDS Paid
             postTdsAmount: parseNumberCell(row[13]), // Column N: Post TDS
             dateOfPayment: dateString // Column O: Date of Payment (normalized)
@@ -1903,20 +1968,20 @@ class GoogleSheetsService {
         // Group by month for breakdown
         const monthlyBreakdown = mentorPayments.reduce((acc, payment) => {
           if (!payment.sessionDate) return acc
-          
+
           try {
             const date = new Date(payment.sessionDate)
             if (isNaN(date.getTime())) return acc
-            
+
             const monthKey = date.toLocaleDateString('en-IN', { year: 'numeric', month: 'long' })
-            
+
             if (!acc[monthKey]) {
               acc[monthKey] = { payout: 0, sessions: 0 }
             }
-            
+
             acc[monthKey].payout += payment.totalPayout || 0
             acc[monthKey].sessions += 1
-            
+
             return acc
           } catch (e) {
             return acc
@@ -2040,14 +2105,14 @@ class GoogleSheetsService {
         spreadsheetId: mentorCommissionSheetId,
       })
       const sheets = spreadsheet.data.sheets || []
-      const tdsSummarySheet = sheets.find((sheet: any) => 
+      const tdsSummarySheet = sheets.find((sheet: any) =>
         sheet.properties?.title?.toLowerCase() === 'tds summary'
       )
-      
+
       if (!tdsSummarySheet) {
         return 0 // Sheet doesn't exist yet
       }
-      
+
       const sheetName = tdsSummarySheet.properties.title
 
       const response = await this.sheets.spreadsheets.values.get({
@@ -2095,10 +2160,10 @@ class GoogleSheetsService {
         spreadsheetId: mentorCommissionSheetId,
       })
       const sheets = spreadsheet.data.sheets || []
-      const tdsSummarySheet = sheets.find((sheet: any) => 
+      const tdsSummarySheet = sheets.find((sheet: any) =>
         sheet.properties?.title?.toLowerCase() === 'tds summary'
       )
-      
+
       let sheetName = 'TDS summary' // Default name
       if (tdsSummarySheet) {
         sheetName = tdsSummarySheet.properties.title // Use actual sheet name (case-sensitive)
@@ -2118,7 +2183,7 @@ class GoogleSheetsService {
           valueInputOption: 'RAW',
           requestBody: {
             values: [[
-              'Date of Payment','Invoice Number','Vendor/Mentor Name','PAN Number','Total Amount','TDS Paid','Post TDS Amount','TDS Status','Invoice Link'
+              'Date of Payment', 'Invoice Number', 'Vendor/Mentor Name', 'PAN Number', 'Total Amount', 'TDS Paid', 'Post TDS Amount', 'TDS Status', 'Invoice Link'
             ]]
           }
         })
