@@ -14,6 +14,7 @@ export interface PaymentRecord {
   rowIndex: number
   mentorEmail?: string
   sheetName?: string // For corporate sessions
+  sessionType?: string // Session type for corporate sessions
 }
 
 export interface MentorRate {
@@ -85,10 +86,16 @@ class GoogleSheetsService {
 
   private parseDateParts(dateStr?: string | null): { day: number; month: number; year: number } | null {
     if (!dateStr) return null
-    const trimmed = dateStr.toString().trim()
-    if (!trimmed) return null
+    const originalTrimmed = dateStr.toString().trim()
+    if (!originalTrimmed) return null
 
-    const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/)
+    // Extract only the date part to avoid regex failure on "DD/MM/YYYY HH:MM:SS"
+    // Also remove common ordinal suffixes like 7th, 1st, 2nd
+    const dateOnly = originalTrimmed.split(/\s+/)[0].replace(/(\d+)(st|nd|rd|th)/i, '$1')
+    const trimmed = dateOnly
+
+    // Match DD/MM/YYYY or DD-MM-YYYY
+    const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})$/)
     if (ddmmyyyyMatch) {
       const day = parseInt(ddmmyyyyMatch[1], 10)
       const month = parseInt(ddmmyyyyMatch[2], 10)
@@ -97,7 +104,7 @@ class GoogleSheetsService {
       return { day, month, year }
     }
 
-    const yyyymmddMatch = trimmed.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/)
+    const yyyymmddMatch = trimmed.match(/^(\d{4})[/\-](\d{1,2})[/\-](\d{1,2})$/)
     if (yyyymmddMatch) {
       const year = parseInt(yyyymmddMatch[1], 10)
       const month = parseInt(yyyymmddMatch[2], 10)
@@ -106,7 +113,7 @@ class GoogleSheetsService {
     }
 
     // Match DD/MM or DD-MM (default to current year)
-    const ddmmMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})$/)
+    const ddmmMatch = trimmed.match(/^(\d{1,2})[/\-](\d{1,2})$/)
     if (ddmmMatch) {
       const day = parseInt(ddmmMatch[1], 10)
       const month = parseInt(ddmmMatch[2], 10)
@@ -114,47 +121,40 @@ class GoogleSheetsService {
       return { day, month, year }
     }
 
-    // Match "Weekday, Month Day" (e.g. "Monday, January 26")
-    const weekdayMatch = trimmed.match(/^([A-Za-z]+), ([A-Za-z]+) (\d{1,2})$/)
-    if (weekdayMatch) {
-      const weekdayStr = weekdayMatch[1].toLowerCase()
-      const monthStr = weekdayMatch[2].toLowerCase()
-      const day = parseInt(weekdayMatch[3], 10)
+    // Match "Weekday, Month Day, Year" or "Month Day, Year" or "Month Day"
+    // (e.g. "Monday, January 26", "January 26, 2025")
+    const cleanFull = originalTrimmed.replace(/(\d+)(st|nd|rd|th)/i, '$1')
+    const months: { [key: string]: number } = {
+      january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+      july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+      jan: 0, feb: 1, mar: 2, apr: 3, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+    }
 
-      const months: { [key: string]: number } = {
-        january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
-        july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
-        jan: 0, feb: 1, mar: 2, apr: 3, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
-      }
-      const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-
+    // Check for "Month Day" or "Month Day Year" formats
+    const monthDayYearMatch = cleanFull.match(/([A-Za-z]+)\s+(\d{1,2})(?:,\s*(\d{2,4}))?/)
+    if (monthDayYearMatch) {
+      const monthStr = monthDayYearMatch[1].toLowerCase()
+      const day = parseInt(monthDayYearMatch[2], 10)
       const month = months[monthStr]
       if (month !== undefined) {
-        // Check years around current year to find which one matches the weekday
-        const currentYear = new Date().getFullYear()
-        const candidateYears = [currentYear, currentYear - 1, currentYear + 1]
-
-        for (const y of candidateYears) {
-          const d = new Date(y, month, day)
-          // Verify date matches weekday
-          if (d.getMonth() === month && days[d.getDay()] === weekdayStr) {
-            return { day, month: month + 1, year: y }
-          }
-        }
-        // Fallback to current year if no match found
-        return { day, month: month + 1, year: currentYear }
+        let year = monthDayYearMatch[3] ? parseInt(monthDayYearMatch[3], 10) : new Date().getFullYear()
+        if (monthDayYearMatch[3] && monthDayYearMatch[3].length === 2) year += 2000
+        return { day, month: month + 1, year }
       }
     }
 
     try {
-      const date = new Date(trimmed)
+      // Fallback for other formats, but be careful with ambiguous formats
+      // If it looks like MM/DD/YYYY to JS but the user expects DD/MM/YYYY, this is where it flips.
+      // However, we already tried DD/MM above.
+      const date = new Date(originalTrimmed)
       if (!isNaN(date.getTime())) {
         const day = date.getDate()
         const month = date.getMonth() + 1
         let year = date.getFullYear()
 
         // Fix for standard parser behavior where missing year defaults to 2001
-        if (year === 2001 && !trimmed.includes('2001') && !trimmed.match(/\b01\b/)) {
+        if (year === 2001 && !originalTrimmed.includes('2001') && !originalTrimmed.match(/\b01\b/)) {
           year = new Date().getFullYear()
         }
 
@@ -168,10 +168,11 @@ class GoogleSheetsService {
   private formatDateForSheets(dateStr?: string | null): string {
     const parts = this.parseDateParts(dateStr)
     if (parts) {
-      const month = parts.month.toString().padStart(2, '0')
       const day = parts.day.toString().padStart(2, '0')
+      const monthStr = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][parts.month - 1]
       const year = parts.year
-      return `${month}/${day}/${year}`
+      // Using "DD MMM YYYY" is the safest format for Google Sheets across all locales
+      return `${day} ${monthStr} ${year}`
     }
     return (dateStr || '').toString().trim()
   }
@@ -224,11 +225,13 @@ class GoogleSheetsService {
         const row = rows[i]
         if (row.length === 0) continue
 
-        // Parse and format the session date correctly
+        // Parse and format the session date correctly (unambiguous YYYY-MM-DD)
         let sessionDate = row[10] || ''
         const dateParts = this.parseDateParts(sessionDate)
         if (dateParts) {
-          sessionDate = `${dateParts.month}/${dateParts.day}/${dateParts.year}`
+          const month = dateParts.month.toString().padStart(2, '0')
+          const day = dateParts.day.toString().padStart(2, '0')
+          sessionDate = `${dateParts.year}-${month}-${day}`
         }
 
         // Get mentor rate and calculate total payout
@@ -435,9 +438,16 @@ class GoogleSheetsService {
       // Prepare data for export (with auto-generated S No. and calculated rates)
       const exportData = payments.map(payment => {
         const isMisc = (payment.sheetName || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
-        // For Miscellaneous Tracker, prefer the per-row rate coming from the corporate sheet
+        const isMesaTracker = (payment.sheetName || '').toString().trim().toLowerCase() === 'mesa tracker' ||
+          (payment.sheetName || '').toString().trim().toUpperCase() === 'MESA'
+
+        // Check if session is an Assessment for MESA
+        const sessionType = (payment.sessionType || '').toString().trim().toLowerCase()
+        const isAssessment = sessionType === 'assement' || sessionType === 'assessment' || sessionType === 'assessement'
+
+        // For Miscellaneous Tracker and MESA Assessment sessions, prefer the per-row rate coming from the corporate session
         const rowRateIsValid = typeof payment.rate === 'number' && isFinite(payment.rate) && payment.rate > 0
-        const mentorRate = isMisc && rowRateIsValid
+        const mentorRate = (isMisc || (isMesaTracker && isAssessment)) && rowRateIsValid
           ? payment.rate
           : this.getMentorRate(mentorRates, payment.mentorName)
 
@@ -1065,11 +1075,13 @@ class GoogleSheetsService {
             const row = rows[i]
             if (row.length === 0) continue
 
-            // Parse and format the session date correctly
+            // Parse and format the session date correctly (unambiguous YYYY-MM-DD)
             let sessionDate = row[6] || ''
             const dateParts = this.parseDateParts(sessionDate)
             if (dateParts) {
-              sessionDate = `${dateParts.month}/${dateParts.day}/${dateParts.year}`
+              const month = dateParts.month.toString().padStart(2, '0')
+              const day = dateParts.day.toString().padStart(2, '0')
+              sessionDate = `${dateParts.year}-${month}-${day}`
             }
 
             // Map the columns based on the actual corporate sheet structure
@@ -1185,7 +1197,8 @@ class GoogleSheetsService {
         totalPayout: 0, // Will calculate below
         rowIndex: session.rowIndex,
         mentorEmail: session.mentorEmail,
-        sheetName: session.sheetName // Add the sheet name for corporate sessions
+        sheetName: session.sheetName, // Add the sheet name for corporate sessions
+        sessionType: session.sessionType // Add the session type
       }))
 
       // Get mentor rates for calculation
@@ -1194,7 +1207,8 @@ class GoogleSheetsService {
       // Calculate rates and payouts for corporate sessions
       corporatePayments.forEach(payment => {
         const isMisc = (payment.sheetName || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
-        const isMesaTracker = (payment.sheetName || '').toString().trim().toLowerCase() === 'mesa tracker'
+        const isMesaTracker = (payment.sheetName || '').toString().trim().toLowerCase() === 'mesa tracker' ||
+          (payment.sheetName || '').toString().trim().toUpperCase() === 'MESA'
 
         // For Miscellaneous Tracker: strictly use per-row Mentor Rate (no fallback to rate list)
         if (isMisc) {
@@ -1215,13 +1229,14 @@ class GoogleSheetsService {
 
         // For Mesa Tracker: apply 1.5x multiplier if session type is "Assessment"
         if (isMesaTracker) {
-          // Get session type from the corporate session (we'll need to pass it through)
-          const corporateSession = corporateSessions.find(s => s.id === payment.id)
-          const sessionType = (corporateSession?.sessionType || '').toString().trim().toLowerCase()
+          // Get session type from the corporate session
+          const sessionType = (payment.sessionType || '').toString().trim().toLowerCase()
 
-          if (sessionType === 'assement') {
+          // Check for various spellings of Assessment
+          if (sessionType === 'assement' || sessionType === 'assessment' || sessionType === 'assessement') {
             baseRate = baseRate * 1.5
-            // Don't update payment.rate - keep it as the original mentor rate
+            // Update the rate to reflect the multiplier as requested
+            payment.rate = baseRate
           }
         }
 
