@@ -280,7 +280,8 @@ class GoogleSheetsService {
   }
 
   async getPendingPayments(): Promise<PaymentRecord[]> {
-    const allPayments = await this.getPaymentData()
+    // Include both regular and corporate payments when computing pending items
+    const allPayments = await this.getAllPaymentsIncludingCorporate()
 
     // Filter payments where Payment column equals "Pending"
     const pendingPayments = allPayments.filter(payment =>
