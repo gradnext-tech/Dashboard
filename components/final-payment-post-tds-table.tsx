@@ -6,6 +6,7 @@ import { Check, Calendar, DollarSign, User, Mail, Search, Filter, ChevronDown, C
 import { format } from 'date-fns'
 import { MultiSelect } from '@/components/ui/multi-select'
 import { MentorBankingDetails } from '@/lib/google-sheets'
+import * as XLSX from 'xlsx'
 
 interface FinalPayment {
   sNo: number
@@ -51,6 +52,7 @@ export function FinalPaymentPostTDSTable({
   const [searchTerm, setSearchTerm] = useState('')
   const [filterMonths, setFilterMonths] = useState<string[]>([])
   const [expandedMentors, setExpandedMentors] = useState<Set<string>>(new Set())
+  const [downloadScope, setDownloadScope] = useState<'all_filtered' | 'selected_mentors'>('all_filtered')
 
   // TDS rate (10%)
   const TDS_RATE = 0.10
@@ -169,6 +171,118 @@ export function FinalPaymentPostTDSTable({
   })
 
   const cumulativePayments = aggregatePaymentsByMentor(filteredPayments)
+
+  const getMonthShort = (monthKey: string) => {
+    // monthKey is like "February 2026" from toLocaleDateString('en-IN', { year:'numeric', month:'long' })
+    const firstWord = (monthKey || '').split(' ')[0] || ''
+    if (!firstWord) return ''
+    return firstWord.slice(0, 3)
+  }
+
+  const buildTransferId = (monthShortLower: string, mentorName: string) => {
+    const firstName = ((mentorName || '').trim().split(/\s+/)[0] || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+    return `${monthShortLower}-${firstName}`
+  }
+
+  const handleDownloadPayments = () => {
+    const mentorsToInclude = downloadScope === 'selected_mentors'
+      ? new Set(Array.from(selectedMentors))
+      : new Set(cumulativePayments.map(m => m.mentorName))
+
+    if (mentorsToInclude.size === 0) {
+      alert(downloadScope === 'selected_mentors'
+        ? 'No mentors selected. Select mentors first, or switch scope to All (filtered).'
+        : 'No mentors found for the current filters.'
+      )
+      return
+    }
+
+    // Group filtered payments by mentor + monthKey
+    const groups = new Map<string, { mentorName: string; monthKey: string; totalPayout: number }>()
+    for (const p of filteredPayments) {
+      if (!mentorsToInclude.has(p.mentorName)) continue
+      if (!p.sessionDate) continue
+      const date = new Date(p.sessionDate)
+      if (isNaN(date.getTime())) continue
+      const monthKey = date.toLocaleDateString('en-IN', { year: 'numeric', month: 'long' })
+      const key = `${p.mentorName}__${monthKey}`
+      const existing = groups.get(key)
+      if (existing) {
+        existing.totalPayout += (p.totalPayout || 0)
+      } else {
+        groups.set(key, { mentorName: p.mentorName, monthKey, totalPayout: (p.totalPayout || 0) })
+      }
+    }
+
+    const rows = Array.from(groups.values())
+      .sort((a, b) => {
+        const byMentor = a.mentorName.localeCompare(b.mentorName)
+        if (byMentor !== 0) return byMentor
+        const da = new Date(a.monthKey).getTime()
+        const db = new Date(b.monthKey).getTime()
+        return isNaN(da) || isNaN(db) ? a.monthKey.localeCompare(b.monthKey) : da - db
+      })
+      .map(g => {
+        const monthShort = getMonthShort(g.monthKey)
+        const monthShortLower = monthShort.toLowerCase()
+        const monthShortCap = monthShort.charAt(0).toUpperCase() + monthShort.slice(1).toLowerCase()
+
+        const bd = bankingDetails.find(b =>
+          b.mentorName.toLowerCase().trim() === g.mentorName.toLowerCase().trim()
+        )
+
+        const postTdsAmount = Number((g.totalPayout || 0) * (1 - TDS_RATE))
+
+        return {
+          TransferID: buildTransferId(monthShortLower, g.mentorName),
+          'Bank Account Number': bd?.accountNumber || '',
+          IFSC: bd?.ifsc || '',
+          Name: bd?.accountHolderName || '',
+          Email: bd?.email || '',
+          'Phone Number A': bd?.phone || '',
+          'Amount Post TDS': postTdsAmount,
+          Remarks: `gradnext - ${monthShortCap}`,
+          transferMode: 'neft'
+        }
+      })
+
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.json_to_sheet(rows, {
+      header: [
+        'TransferID',
+        'Bank Account Number',
+        'IFSC',
+        'Name',
+        'Email',
+        'Phone Number A',
+        'Amount Post TDS',
+        'Remarks',
+        'transferMode'
+      ]
+    })
+
+    // Format Amount column as number with 2 decimals
+    // Column index starts at 0; "Amount Post TDS" is 6 => column "G"
+    for (let r = 2; r <= rows.length + 1; r++) {
+      const cell = ws[`G${r}`]
+      if (cell) {
+        cell.t = 'n'
+        cell.z = '0.00'
+      }
+    }
+
+    XLSX.utils.book_append_sheet(wb, ws, 'payments')
+
+    const monthPart = (filterMonths.length > 0 ? filterMonths : getUniqueMonths())
+      .map(m => getMonthShort(m).toLowerCase())
+      .filter(Boolean)
+      .join('-') || 'all'
+    const datePart = new Date().toISOString().slice(0, 10)
+    const fileName = `final-payments_${monthPart}_${datePart}.xlsx`
+    XLSX.writeFile(wb, fileName)
+  }
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -348,17 +462,35 @@ export function FinalPaymentPostTDSTable({
             }
           </span>
         </div>
-        
-        {selectedMentors.size > 0 && onMarkMentorPaid && (
-          <Button
-            onClick={handleMarkSelectedAsPaid}
-            disabled={processing}
-            className="bg-green-600 hover:bg-green-700"
+
+        <div className="flex items-center space-x-2">
+          <select
+            value={downloadScope}
+            onChange={(e) => setDownloadScope(e.target.value as 'all_filtered' | 'selected_mentors')}
+            className="h-9 rounded-md border border-gray-300 bg-white px-3 text-sm"
           >
-            <Check className="w-4 h-4 mr-2" />
-            Mark Selected as Paid ({selectedMentors.size})
+            <option value="all_filtered">Download: All (filtered)</option>
+            <option value="selected_mentors">Download: Selected mentors</option>
+          </select>
+
+          <Button
+            onClick={handleDownloadPayments}
+            variant="outline"
+          >
+            Download Payments
           </Button>
-        )}
+
+          {selectedMentors.size > 0 && onMarkMentorPaid && (
+            <Button
+              onClick={handleMarkSelectedAsPaid}
+              disabled={processing}
+              className="bg-green-600 hover:bg-green-700"
+            >
+              <Check className="w-4 h-4 mr-2" />
+              Mark Selected as Paid ({selectedMentors.size})
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Summary Stats */}

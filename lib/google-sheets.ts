@@ -25,6 +25,7 @@ export interface MentorRate {
 export interface MentorBankingDetails {
   mentorName: string
   email: string
+  phone?: string
   accountHolderName: string
   accountNumber: string
   ifsc: string
@@ -870,6 +871,7 @@ class GoogleSheetsService {
 
         const mentorName = (row[1] || '').trim() // Column B: Full Name
         const email = (row[2] || '').trim() // Column C: Email ID
+        const phone = (row[3] || '').trim() // Column D: Phone Number
         const accountHolderName = (row[6] || '').trim() // Column G: Name on the Account
         const accountNumber = (row[7] || '').trim() // Column H: Account Number
         const ifsc = (row[10] || '').trim() // Column K: Bank IFSC Code
@@ -879,6 +881,7 @@ class GoogleSheetsService {
           bankingDetails.push({
             mentorName: mentorName.toLowerCase().trim(),
             email: email,
+            phone: phone,
             accountHolderName: accountHolderName,
             accountNumber: accountNumber,
             ifsc: ifsc,
@@ -1035,122 +1038,133 @@ class GoogleSheetsService {
       const allCorporateSessions: CorporateSessionRecord[] = []
       let globalSNo = 1
 
-      // Process each sheet (excluding any system sheets)
-      for (const sheet of sheets) {
-        const sheetTitle = sheet.properties?.title
-        if (!sheetTitle || sheetTitle.toLowerCase().includes('summary') || sheetTitle.toLowerCase().includes('template')) {
-          continue
-        }
+      // Helper: chunk arrays to keep response sizes reasonable
+      const chunk = <T,>(arr: T[], size: number): T[][] => {
+        const out: T[][] = []
+        for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+        return out
+      }
 
+      const isSkippableTitle = (title: string) => {
+        const t = (title || '').toString().trim().toLowerCase()
+        if (!t) return true
+        // Common non-session/system tabs we never want to read
+        if (t.includes('summary') || t.includes('template')) return true
+        if (t.includes('mentee email') || t.includes('mentor email')) return true
+        if (t.includes('email address') || t.includes('emails')) return true
+        if (t.includes('config') || t.includes('lookup') || t.includes('master')) return true
+        return false
+      }
 
+      // Collect candidate sheet titles first (avoid per-sheet requests)
+      const sheetTitles = sheets
+        .map((s: any) => (s?.properties?.title as string) || '')
+        .filter(Boolean)
+        .filter((t: string) => !isSkippableTitle(t))
+
+      // Expected headers for corporate structure validation
+      const expectedHeaders = ['Sr No.', 'Mentor Name', 'Mentor Email', 'Mentee Name', 'Mentee Email', 'Mentee Phone', 'Date', 'Time', 'Invite Title', 'Invitation Status', 'Mentor Confirmation Status', 'Mentee Confirmation Status', 'Session Status', 'Mentor Feedback', 'Mentee Feedback', 'Payment Status']
+
+      // Robustly parse mentor rate if present (currency/text tolerant)
+      const parseRate = (value: any): number | undefined => {
+        if (value === undefined || value === null) return undefined
+        const raw = String(value).trim()
+        if (!raw) return undefined
+        const cleaned = raw.replace(/[^0-9.\-]/g, '')
+        const num = Number(cleaned)
+        return Number.isFinite(num) && num > 0 ? num : undefined
+      }
+
+      // Batch read sheets in chunks to reduce API calls (avoids 429 quota errors)
+      for (const titlesChunk of chunk(sheetTitles, 25)) {
         try {
-          // Get data from this sheet
-          const response = await this.sheets.spreadsheets.values.get({
+          const ranges = titlesChunk.map(t => `${t}!A:Z`)
+          const batch = await this.sheets.spreadsheets.values.batchGet({
             spreadsheetId: corporateSpreadsheetId,
-            range: `${sheetTitle}!A:Z`, // Extend to include potential extra columns such as Mentor Rate
+            ranges,
           })
 
-          const rows = response.data.values || []
+          const valueRanges = batch.data.valueRanges || []
 
-          if (rows.length <= 1) {
-            continue
-          }
+          for (const vr of valueRanges) {
+            const range = vr.range || ''
+            const sheetTitle = range.split('!')[0] || ''
+            const rows = vr.values || []
 
-          // Validate header row to ensure correct column structure
-          const headerRow = rows[0] || []
-          const expectedHeaders = ['Sr No.', 'Mentor Name', 'Mentor Email', 'Mentee Name', 'Mentee Email', 'Mentee Phone', 'Date', 'Time', 'Invite Title', 'Invitation Status', 'Mentor Confirmation Status', 'Mentee Confirmation Status', 'Session Status', 'Mentor Feedback', 'Mentee Feedback', 'Payment Status']
+            if (!sheetTitle || rows.length <= 1) continue
 
-          // Check if this sheet has the expected corporate structure
-          const hasValidStructure = expectedHeaders.every((expectedHeader, index) => {
-            const actualHeader = (headerRow[index] || '').toString().trim()
-            return actualHeader.toLowerCase().includes(expectedHeader.toLowerCase().split(' ')[0]) // Check first word match
-          })
+            const headerRow = rows[0] || []
+            const isMiscSheet = (sheetTitle || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
 
-          const isMiscSheet = (sheetTitle || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
-          if (!hasValidStructure && !isMiscSheet) {
-            continue
-          }
+            const hasValidStructure = expectedHeaders.every((expectedHeader, index) => {
+              const actualHeader = (headerRow[index] || '').toString().trim()
+              return actualHeader.toLowerCase().includes(expectedHeader.toLowerCase().split(' ')[0])
+            })
 
-          // Process data rows (skip header)
-          for (let i = 1; i < rows.length; i++) {
-            const row = rows[i]
-            if (row.length === 0) continue
-
-            // Parse and format the session date correctly (unambiguous YYYY-MM-DD)
-            let sessionDate = row[6] || ''
-            const dateParts = this.parseDateParts(sessionDate)
-            if (dateParts) {
-              const month = dateParts.month.toString().padStart(2, '0')
-              const day = dateParts.day.toString().padStart(2, '0')
-              sessionDate = `${dateParts.year}-${month}-${day}`
-            }
-
-            // Map the columns based on the actual corporate sheet structure
-            // Robustly parse mentor rate if present (currency/text tolerant)
-            const parseRate = (value: any): number | undefined => {
-              if (value === undefined || value === null) return undefined
-              const raw = String(value).trim()
-              if (!raw) return undefined
-              const cleaned = raw.replace(/[^0-9.\-]/g, '')
-              const num = Number(cleaned)
-              return Number.isFinite(num) && num > 0 ? num : undefined
-            }
+            if (!hasValidStructure && !isMiscSheet) continue
 
             // Find Mentor Rate column dynamically
             const mentorRateIndex = (() => {
               const normalizedHeaders = headerRow.map((h: string) => (h || '').toString().trim().toLowerCase())
-              // Be more permissive for Miscellaneous tracker
               const candidates = isMiscSheet
                 ? ['mentor rate', 'rate', 'mentor base rate', 'payment rate']
                 : ['mentor rate']
 
-              // Exact match first
               for (const key of candidates) {
                 const idx = normalizedHeaders.findIndex((h: string) => h === key)
                 if (idx >= 0) return idx
               }
-
-              // Fallback: substring match (handles variations like "Mentor Rate (INR)")
               for (const key of candidates) {
                 const idx = normalizedHeaders.findIndex((h: string) => h.includes(key))
                 if (idx >= 0) return idx
               }
-
               return -1
             })()
 
+            for (let i = 1; i < rows.length; i++) {
+              const row = rows[i]
+              if (!row || row.length === 0) continue
 
-            const corporateSession: CorporateSessionRecord = {
-              id: `corporate_${sheetTitle}_${i}`,
-              sNo: globalSNo.toString(),
-              mentorName: row[1] || '', // Column B - Mentor Name
-              mentorEmail: row[2] || '', // Column C - Mentor Email
-              menteeName: row[3] || '', // Column D - Mentee Name (not sheet name)
-              menteeEmail: row[4] || '', // Column E - Mentee Email
-              menteePhone: row[5] || '', // Column F - Mentee Phone
-              date: sessionDate, // Column G - Date
-              time: row[7] || '', // Column H - Time
-              inviteTitle: row[8] || '', // Column I - Invite Title
-              invitationStatus: row[9] || '', // Column J - Invitation Status
-              mentorConfirmationStatus: row[10] || '', // Column K - Mentor Confirmation Status
-              menteeConfirmationStatus: row[11] || '', // Column L - Mentee Confirmation Status
-              sessionStatus: row[12] || '', // Column M - Session Status
-              mentorFeedback: row[13] || '', // Column N - Mentor Feedback
-              menteeFeedback: row[14] || '', // Column O - Mentee Feedback
-              paymentStatus: row[15] || '', // Column P - Payment Status
-              rowIndex: i + 1,
-              sheetName: sheetTitle,
-              // Use per-row mentor rate when available; for Miscellaneous tracker this should be present
-              customRate: mentorRateIndex >= 0 ? parseRate(row[mentorRateIndex]) : undefined,
-              sessionType: row[17] || '' // Column R - Session Type
+              // Parse and format the session date correctly (unambiguous YYYY-MM-DD)
+              let sessionDate = row[6] || ''
+              const dateParts = this.parseDateParts(sessionDate)
+              if (dateParts) {
+                const month = dateParts.month.toString().padStart(2, '0')
+                const day = dateParts.day.toString().padStart(2, '0')
+                sessionDate = `${dateParts.year}-${month}-${day}`
+              }
+
+              const corporateSession: CorporateSessionRecord = {
+                id: `corporate_${sheetTitle}_${i}`,
+                sNo: globalSNo.toString(),
+                mentorName: row[1] || '',
+                mentorEmail: row[2] || '',
+                menteeName: row[3] || '',
+                menteeEmail: row[4] || '',
+                menteePhone: row[5] || '',
+                date: sessionDate,
+                time: row[7] || '',
+                inviteTitle: row[8] || '',
+                invitationStatus: row[9] || '',
+                mentorConfirmationStatus: row[10] || '',
+                menteeConfirmationStatus: row[11] || '',
+                sessionStatus: row[12] || '',
+                mentorFeedback: row[13] || '',
+                menteeFeedback: row[14] || '',
+                paymentStatus: row[15] || '',
+                rowIndex: i + 1,
+                sheetName: sheetTitle,
+                customRate: mentorRateIndex >= 0 ? parseRate(row[mentorRateIndex]) : undefined,
+                sessionType: row[17] || ''
+              }
+
+              allCorporateSessions.push(corporateSession)
+              globalSNo++
             }
-
-            allCorporateSessions.push(corporateSession)
-            globalSNo++
           }
-        } catch (sheetError) {
-          console.error(`Error processing sheet ${sheetTitle}:`, sheetError)
-          // Continue with other sheets even if one fails
+        } catch (chunkError) {
+          console.error(`Error processing corporate sheet chunk:`, chunkError)
+          // Continue with other chunks even if one fails
         }
       }
 
