@@ -439,7 +439,8 @@ class GoogleSheetsService {
 
       // Prepare data for export (with auto-generated S No. and calculated rates)
       const exportData = payments.map(payment => {
-        const isMisc = (payment.sheetName || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
+        const normalizedSheetName = (payment.sheetName || '').toString().trim().toLowerCase()
+        const isMisc = normalizedSheetName.includes('miscellaneous')
         const isMesaTracker = (payment.sheetName || '').toString().trim().toLowerCase() === 'mesa tracker' ||
           (payment.sheetName || '').toString().trim().toUpperCase() === 'MESA'
 
@@ -447,11 +448,16 @@ class GoogleSheetsService {
         const sessionType = (payment.sessionType || '').toString().trim().toLowerCase()
         const isAssessment = sessionType === 'assement' || sessionType === 'assessment' || sessionType === 'assessement'
 
-        // For Miscellaneous Tracker and MESA Assessment sessions, prefer the per-row rate coming from the corporate session
+        // Always trust a valid incoming row rate (already computed upstream for corporate flows).
+        // This keeps export/final-payments consistent with the email flow and prevents misc rows
+        // from being overwritten by the mentor-rate-sheet default.
         const rowRateIsValid = typeof payment.rate === 'number' && isFinite(payment.rate) && payment.rate > 0
-        const mentorRate = (isMisc || (isMesaTracker && isAssessment)) && rowRateIsValid
-          ? payment.rate
-          : this.getMentorRate(mentorRates, payment.mentorName)
+        let mentorRate = rowRateIsValid ? payment.rate : this.getMentorRate(mentorRates, payment.mentorName)
+
+        // Safety fallback for special sheets when incoming rate is missing
+        if (!rowRateIsValid && (isMisc || (isMesaTracker && isAssessment))) {
+          mentorRate = this.getMentorRate(mentorRates, payment.mentorName)
+        }
 
         const totalPayout = mentorRate * payment.noOfSessions
         const revenuePerSession = mentorRate // Revenue per session is the same as rate
@@ -1094,7 +1100,7 @@ class GoogleSheetsService {
             if (!sheetTitle || rows.length <= 1) continue
 
             const headerRow = rows[0] || []
-            const isMiscSheet = (sheetTitle || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
+            const isMiscSheet = (sheetTitle || '').toString().trim().toLowerCase().includes('miscellaneous')
 
             const hasValidStructure = expectedHeaders.every((expectedHeader, index) => {
               const actualHeader = (headerRow[index] || '').toString().trim()
@@ -1221,7 +1227,7 @@ class GoogleSheetsService {
 
       // Calculate rates and payouts for corporate sessions
       corporatePayments.forEach(payment => {
-        const isMisc = (payment.sheetName || '').toString().trim().toLowerCase() === 'miscellaneous tracker'
+        const isMisc = (payment.sheetName || '').toString().trim().toLowerCase().includes('miscellaneous')
         const isMesaTracker = (payment.sheetName || '').toString().trim().toLowerCase() === 'mesa tracker' ||
           (payment.sheetName || '').toString().trim().toUpperCase() === 'MESA'
 
