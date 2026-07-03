@@ -420,8 +420,9 @@ export function PaymentTable({ payments, onMarkAsPaid, onExportIndividual, loadi
                     {payment.noOfSessions}
                   </td>
                   <td className="px-4 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">
+                    <div className={`text-sm font-medium ${payment.totalPayout < 0 ? 'text-red-600' : 'text-gray-900'}`}>
                       {formatCurrency(payment.totalPayout)}
+                      {payment.totalPayout < 0 && <span className="ml-1 text-xs bg-red-100 text-red-700 px-1 py-0.5 rounded">Deduction</span>}
                     </div>
                   </td>
                   <td className="px-3 py-4 whitespace-nowrap">
@@ -556,8 +557,9 @@ export function PaymentTable({ payments, onMarkAsPaid, onExportIndividual, loadi
                 <span className="text-sm text-gray-500 font-medium">
                   Total Payout
                 </span>
-                <span className="text-sm font-bold text-gray-900">
+                <span className={`text-sm font-bold ${payment.totalPayout < 0 ? 'text-red-600' : 'text-gray-900'}`}>
                   {formatCurrency(payment.totalPayout)}
+                  {payment.totalPayout < 0 && <span className="ml-1 text-xs bg-red-100 text-red-700 px-1 py-0.5 rounded">Deduction</span>}
                 </span>
               </div>
             </div>

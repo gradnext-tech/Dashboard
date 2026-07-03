@@ -68,7 +68,6 @@ export function AddManualEntryForm({ onAdd, onClose, loading = false }: AddManua
     if (formData.rate !== '' && typeof formData.rate === 'number' && formData.rate < 0) newErrors.rate = 'Rate must be non-negative'
     if (!formData.paymentStatus.trim()) newErrors.paymentStatus = 'Payment Status is required'
     if (formData.noOfSessions === '' || (typeof formData.noOfSessions === 'number' && formData.noOfSessions < 1)) newErrors.noOfSessions = 'No. of Sessions must be at least 1'
-    if (formData.totalPayout !== '' && typeof formData.totalPayout === 'number' && formData.totalPayout < 0) newErrors.totalPayout = 'Total Payout must be non-negative'
 
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
@@ -258,10 +257,10 @@ export function AddManualEntryForm({ onAdd, onClose, loading = false }: AddManua
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Total Payout
+                  <span className="ml-1 text-xs text-gray-400 font-normal">(negative = deduction)</span>
                 </label>
                 <input
                   type="number"
-                  min="0"
                   step="0.01"
                   value={formData.totalPayout}
                   onChange={(e) => handleNumberChange('totalPayout', e.target.value)}

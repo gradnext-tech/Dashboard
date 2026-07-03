@@ -451,7 +451,7 @@ class GoogleSheetsService {
         // Always trust a valid incoming row rate (already computed upstream for corporate flows).
         // This keeps export/final-payments consistent with the email flow and prevents misc rows
         // from being overwritten by the mentor-rate-sheet default.
-        const rowRateIsValid = typeof payment.rate === 'number' && isFinite(payment.rate) && payment.rate > 0
+        const rowRateIsValid = typeof payment.rate === 'number' && isFinite(payment.rate) && payment.rate !== 0
         let mentorRate = rowRateIsValid ? payment.rate : this.getMentorRate(mentorRates, payment.mentorName)
 
         // Safety fallback for special sheets when incoming rate is missing
@@ -595,11 +595,12 @@ class GoogleSheetsService {
 
       // Use mentor rate from rates sheet if available, otherwise use provided rate
       const finalRate = mentorRate > 0 ? mentorRate : entry.rate
-      const finalTotalPayout = finalRate * entry.noOfSessions
+      // Respect explicitly entered totalPayout (including negatives for deductions); compute from rate otherwise
+      const finalTotalPayout = entry.totalPayout !== 0 ? entry.totalPayout : finalRate * entry.noOfSessions
 
       // Prepare data for manual entry (with auto-generated S No. and calculated rates)
       const revenuePerSession = finalRate // Revenue per session is the same as rate
-      const totalRevenue = finalRate * entry.noOfSessions // Total revenue is rate * sessions
+      const totalRevenue = finalTotalPayout // Total revenue matches the final payout
 
       const entryData = [
         nextSNo,                              // S No.
@@ -1078,7 +1079,7 @@ class GoogleSheetsService {
         if (!raw) return undefined
         const cleaned = raw.replace(/[^0-9.\-]/g, '')
         const num = Number(cleaned)
-        return Number.isFinite(num) && num > 0 ? num : undefined
+        return Number.isFinite(num) && num !== 0 ? num : undefined
       }
 
       // Batch read sheets in chunks to reduce API calls (avoids 429 quota errors)
@@ -1233,14 +1234,14 @@ class GoogleSheetsService {
 
         // For Miscellaneous Tracker: strictly use per-row Mentor Rate (no fallback to rate list)
         if (isMisc) {
-          const hasValidRowRate = typeof payment.rate === 'number' && isFinite(payment.rate) && payment.rate > 0
+          const hasValidRowRate = typeof payment.rate === 'number' && isFinite(payment.rate) && payment.rate !== 0
           payment.totalPayout = hasValidRowRate ? (payment.rate * payment.noOfSessions) : 0
           return
         }
 
         // For other corporate sheets: use per-row rate if present, otherwise fallback to mentor rates sheet
         let baseRate = 0
-        if (typeof payment.rate === 'number' && isFinite(payment.rate) && payment.rate > 0) {
+        if (typeof payment.rate === 'number' && isFinite(payment.rate) && payment.rate !== 0) {
           baseRate = payment.rate
         } else {
           const mentorRate = this.getMentorRate(mentorRates, payment.mentorName)

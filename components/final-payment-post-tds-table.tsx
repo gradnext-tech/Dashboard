@@ -599,17 +599,17 @@ export function FinalPaymentPostTDSTable({
                       {mentorData.totalSessions}
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">
+                      <div className={`text-sm font-medium ${mentorData.totalPayout < 0 ? 'text-red-600' : 'text-gray-900'}`}>
                         {formatCurrency(mentorData.totalPayout)}
                       </div>
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap">
                       <div className="text-sm font-medium text-red-600">
-                        -{formatCurrency(mentorData.tdsAmount)}
+                        {mentorData.tdsAmount >= 0 ? `-${formatCurrency(mentorData.tdsAmount)}` : formatCurrency(mentorData.tdsAmount)}
                       </div>
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap">
-                      <div className="text-sm font-bold text-green-600">
+                      <div className={`text-sm font-bold ${mentorData.totalPayoutPostTDS >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                         {formatCurrency(mentorData.totalPayoutPostTDS)}
                       </div>
                     </td>
@@ -680,9 +680,9 @@ export function FinalPaymentPostTDSTable({
                                   <div key={month.month} className="bg-white p-3 rounded border">
                                     <div className="text-xs text-gray-500">{month.month}</div>
                                     <div className="text-sm font-medium">{month.sessions} sessions</div>
-                                    <div className="text-sm text-gray-600">Pre-TDS: {formatCurrency(month.payout)}</div>
-                                    <div className="text-sm text-red-600">TDS: -{formatCurrency(month.tdsAmount)}</div>
-                                    <div className="text-sm font-bold text-green-600">Post-TDS: {formatCurrency(month.payoutPostTDS)}</div>
+                                    <div className={`text-sm ${month.payout < 0 ? 'text-red-600' : 'text-gray-600'}`}>Pre-TDS: {formatCurrency(month.payout)}</div>
+                                    <div className="text-sm text-red-600">TDS: {month.tdsAmount >= 0 ? `-${formatCurrency(month.tdsAmount)}` : formatCurrency(month.tdsAmount)}</div>
+                                    <div className={`text-sm font-bold ${month.payoutPostTDS >= 0 ? 'text-green-600' : 'text-red-600'}`}>Post-TDS: {formatCurrency(month.payoutPostTDS)}</div>
                                   </div>
                                 ))}
                               </div>
@@ -706,16 +706,24 @@ export function FinalPaymentPostTDSTable({
                                 </thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
                                   {mentorData.payments.map((payment) => {
+                                    const isDeduction = payment.totalPayout < 0
                                     const paymentTDS = payment.totalPayout * TDS_RATE
                                     const paymentPostTDS = payment.totalPayout - paymentTDS
                                     return (
-                                      <tr key={payment.sNo}>
+                                      <tr key={payment.sNo} className={isDeduction ? 'bg-red-50' : ''}>
                                         <td className="px-3 py-2 text-xs text-gray-900">{formatDate(payment.sessionDate)}</td>
-                                        <td className="px-3 py-2 text-xs text-gray-900">{payment.menteeName}</td>
+                                        <td className="px-3 py-2 text-xs text-gray-900">
+                                          {payment.menteeName}
+                                          {isDeduction && (
+                                            <span className="ml-1 px-1 py-0.5 text-xs bg-red-100 text-red-700 rounded">Deduction</span>
+                                          )}
+                                        </td>
                                         <td className="px-3 py-2 text-xs text-gray-900">{payment.noOfSessions}</td>
-                                        <td className="px-3 py-2 text-xs font-medium text-gray-900">{formatCurrency(payment.totalPayout)}</td>
-                                        <td className="px-3 py-2 text-xs font-medium text-red-600">-{formatCurrency(paymentTDS)}</td>
-                                        <td className="px-3 py-2 text-xs font-medium text-green-600">{formatCurrency(paymentPostTDS)}</td>
+                                        <td className={`px-3 py-2 text-xs font-medium ${isDeduction ? 'text-red-600' : 'text-gray-900'}`}>{formatCurrency(payment.totalPayout)}</td>
+                                        <td className="px-3 py-2 text-xs font-medium text-red-600">
+                                          {paymentTDS >= 0 ? `-${formatCurrency(paymentTDS)}` : formatCurrency(paymentTDS)}
+                                        </td>
+                                        <td className={`px-3 py-2 text-xs font-medium ${paymentPostTDS >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(paymentPostTDS)}</td>
                                       </tr>
                                     )
                                   })}
