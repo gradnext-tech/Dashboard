@@ -207,7 +207,7 @@ class GoogleSheetsService {
       // Get all data from the Session Info sheet
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId,
-        range: 'Session Info!A:S', // All columns from A to S
+        range: 'Session Info!A:W', // All columns from A to W
       })
 
       const rows = response.data.values || []
@@ -247,9 +247,9 @@ class GoogleSheetsService {
           mentorName: mentorName, // Mentor Name
           menteeName: row[6] || '', // Candidate Name
           sessionDate: sessionDate, // Session Date
-          sessionStatus: row[12] || '', // Session Status
+          sessionStatus: row[13] || '', // Session Status (col N)
           rate: mentorRate, // Rate from Rate List sheet
-          paymentStatus: (row[17] || '').toLowerCase(), // Payment column
+          paymentStatus: (row[14] || '').toLowerCase(), // Payment column (col O)
           noOfSessions: noOfSessions, // Each row = 1 session (Session Number column is just a counter, not quantity)
           totalPayout: totalPayout, // Calculated total payout
           rowIndex: i + 1, // +1 because sheets are 1-indexed
@@ -315,7 +315,7 @@ class GoogleSheetsService {
       // Update the payment status in the specific cell (Payment column is R, which is column 18)
       await this.sheets.spreadsheets.values.update({
         spreadsheetId,
-        range: `Session Info!R${payment.rowIndex}`, // Column R is Payment Status in Session Info sheet
+        range: `Session Info!O${payment.rowIndex}`, // Column O is Payment Status in Session Info sheet
         valueInputOption: 'RAW',
         resource: {
           values: [['Paid']],
@@ -346,7 +346,7 @@ class GoogleSheetsService {
         if (!payment) return null
 
         return {
-          range: `Session Info!R${payment.rowIndex}`,
+          range: `Session Info!O${payment.rowIndex}`,
           values: [['Paid']],
         }
       }).filter(Boolean)
@@ -517,7 +517,7 @@ class GoogleSheetsService {
       // Handle regular payments (Session Info sheet)
       if (regularPayments.length > 0) {
         const regularRequests = regularPayments.map(payment => ({
-          range: `Session Info!R${payment.rowIndex}`, // Column R is Payment Status in Session Info sheet
+          range: `Session Info!O${payment.rowIndex}`, // Column O is Payment Status in Session Info sheet
           values: [['Paid']],
         }))
 
